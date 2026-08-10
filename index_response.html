@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlixDrive</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- ============ auth gate ============ -->
+    <section id="auth-screen" class="auth-screen" hidden>
+      <div class="auth-art" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+      </div>
+
+      <div class="auth-card">
+        <div class="logo logo-lg">
+          <span class="logo-mark">FD</span>
+          <span class="logo-text">FlixDrive</span>
+        </div>
+        <p class="auth-sub">Your films and photos, in one place.</p>
+
+        <div class="segmented" id="auth-tabs" role="tablist">
+          <button class="seg is-active" data-mode="login" role="tab">Sign in</button>
+          <button class="seg" data-mode="register" role="tab">Create account</button>
+        </div>
+
+        <form id="auth-form" autocomplete="on" novalidate>
+          <label class="field" id="name-field" hidden>
+            <span class="field-label">Display name</span>
+            <input name="displayName" type="text" autocomplete="name" placeholder="Ada Lovelace" />
+          </label>
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input name="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+          </label>
+          <label class="field">
+            <span class="field-label">Password</span>
+            <input name="password" type="password" autocomplete="current-password"
+                   placeholder="At least 8 characters" required minlength="8" />
+          </label>
+
+          <button class="btn btn-primary btn-block btn-lg" type="submit">
+            <span class="btn-label">Sign in</span>
+          </button>
+          <p class="form-msg is-err" id="auth-error" role="alert"></p>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ app shell ============ -->
+    <div id="app" class="shell" hidden>
+      <aside class="sidebar">
+        <div class="logo">
+          <span class="logo-mark">FD</span>
+          <span class="logo-text">FlixDrive</span>
+        </div>
+
+        <nav class="nav" id="nav">
+          <button class="nav-btn is-active" data-view="watch">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 6.2 4.2l11.6 6.5a1.5 1.5 0 0 1 0 2.6L6.2 19.8A1.5 1.5 0 0 1 4 18.5z"/></svg>
+            <span>Watch</span>
+          </button>
+          <button class="nav-btn" data-view="photos">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2 10.5 3.4-3.9 2.4 2.7 3-3.6L18 17z"/><circle cx="9" cy="9" r="1.6"/></svg>
+            <span>Photos</span>
+          </button>
+          <button class="nav-btn" data-view="upload">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 17 9h-3.2v6.5h-3.6V9H7zM5 18.5h14V21H5z"/></svg>
+            <span>Upload</span>
+          </button>
+          <button class="nav-btn" data-view="profile">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0z"/></svg>
+            <span>Profile</span>
+          </button>
+        </nav>
+
+        <button class="user-chip" id="user-chip" data-view="profile">
+          <span class="avatar avatar-sm" id="chip-avatar">?</span>
+          <span class="user-chip-text">
+            <strong id="chip-name">&nbsp;</strong>
+            <small id="chip-email">&nbsp;</small>
+          </span>
+        </button>
+      </aside>
+
+      <main class="content">
+        <!-- ---------- WATCH ---------- -->
+        <section class="view is-active" data-view="watch">
+          <header class="page-head">
+            <div>
+              <h1>Watch</h1>
+              <p class="page-sub" id="watch-sub">&nbsp;</p>
+            </div>
+          </header>
+
+          <article class="hero" id="hero" hidden>
+            <div class="hero-art"><img id="hero-poster" alt="" /></div>
+            <div class="hero-body">
+              <span class="pill">Latest upload</span>
+              <h2 id="hero-title"></h2>
+              <p class="hero-meta" id="hero-meta"></p>
+              <div class="hero-actions">
+                <button class="btn btn-primary" id="hero-play">
+                  <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8 19 12 7 19.2z"/></svg>
+                  <span class="btn-label" id="hero-play-label">Play</span>
+                </button>
+              </div>
+            </div>
+          </article>
+
+          <section class="rail" id="continue-row" hidden>
+            <h2 class="rail-title">Continue watching</h2>
+            <div class="grid" id="continue-grid"></div>
+          </section>
+
+          <section class="rail">
+            <h2 class="rail-title">Your library</h2>
+            <div class="grid" id="library-grid"></div>
+            <div class="empty" id="library-empty" hidden>
+              <div class="empty-ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 6.2 4.2l11.6 6.5a1.5 1.5 0 0 1 0 2.6L6.2 19.8A1.5 1.5 0 0 1 4 18.5z"/></svg>
+              </div>
+              <h3>No videos yet</h3>
+              <p>Upload a file and it will appear here once processing finishes.</p>
+              <button class="btn btn-soft" data-goto="upload">Go to Upload</button>
+            </div>
+          </section>
+        </section>
+
+        <!-- ---------- PHOTOS ---------- -->
+        <section class="view" data-view="photos">
+          <header class="page-head">
+            <div>
+              <h1>Photos</h1>
+              <p class="page-sub" id="photos-sub">&nbsp;</p>
+            </div>
+          </header>
+
+          <div id="timeline"></div>
+
+          <div class="empty" id="photos-empty" hidden>
+            <div class="empty-ico">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2 10.5 3.4-3.9 2.4 2.7 3-3.6L18 17z"/><circle cx="9" cy="9" r="1.6"/></svg>
+            </div>
+            <h3>Your timeline is empty</h3>
+            <p>Photos are grouped by the date they were taken, read from EXIF.</p>
+            <button class="btn btn-soft" data-goto="upload">Add photos</button>
+          </div>
+        </section>
+
+        <!-- ---------- UPLOAD ---------- -->
+        <section class="view" data-view="upload">
+          <header class="page-head">
+            <div>
+              <h1>Upload</h1>
+              <p class="page-sub">Files are processed in the background — you can keep browsing.</p>
+            </div>
+          </header>
+
+          <div class="upload-pair">
+            <form class="panel" id="video-form">
+              <h2 class="panel-title">Add a video</h2>
+              <p class="panel-sub">MP4, WebM, MOV or MKV.</p>
+
+              <label class="drop" id="video-drop">
+                <input name="video" type="file" accept="video/*" required hidden />
+                <svg class="drop-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 17 9h-3.2v6.5h-3.6V9H7zM5 18.5h14V21H5z"/></svg>
+                <strong class="drop-label">Drop a video here</strong>
+                <small>or click to browse</small>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Title <em>optional</em></span>
+                <input name="title" type="text" placeholder="Defaults to the filename" />
+              </label>
+
+              <button class="btn btn-primary btn-block" type="submit">
+                <span class="btn-label">Upload video</span>
+              </button>
+              <p class="form-msg" id="video-status"></p>
+            </form>
+
+            <form class="panel" id="photo-form">
+              <h2 class="panel-title">Add photos</h2>
+              <p class="panel-sub">JPEG, PNG, WebP, GIF or AVIF. Up to 20 at once.</p>
+
+              <label class="drop" id="photo-drop">
+                <input name="photos" type="file" accept="image/*" multiple required hidden />
+                <svg class="drop-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2 10.5 3.4-3.9 2.4 2.7 3-3.6L18 17z"/><circle cx="9" cy="9" r="1.6"/></svg>
+                <strong class="drop-label">Drop photos here</strong>
+                <small>or click to browse</small>
+              </label>
+
+              <button class="btn btn-primary btn-block" type="submit">
+                <span class="btn-label">Upload photos</span>
+              </button>
+              <p class="form-msg" id="photo-status"></p>
+            </form>
+          </div>
+        </section>
+
+        <!-- ---------- PROFILE ---------- -->
+        <section class="view" data-view="profile">
+          <header class="page-head">
+            <div>
+              <h1>Profile</h1>
+              <p class="page-sub">Your account and what is in your library.</p>
+            </div>
+          </header>
+
+          <article class="profile-card">
+            <span class="avatar avatar-lg" id="profile-avatar">?</span>
+            <div class="profile-id">
+              <h2 id="profile-name">&nbsp;</h2>
+              <p id="profile-email">&nbsp;</p>
+              <p class="muted-sm" id="profile-joined">&nbsp;</p>
+            </div>
+            <button class="btn btn-soft" id="signout-btn">Sign out</button>
+          </article>
+
+          <div class="stats" id="stats"></div>
+
+          <div class="upload-pair">
+            <form class="panel" id="name-form">
+              <h2 class="panel-title">Display name</h2>
+              <p class="panel-sub">Shown on your account. Your email stays your login.</p>
+              <label class="field">
+                <span class="field-label">Name</span>
+                <input name="displayName" type="text" maxlength="80" required />
+              </label>
+              <button class="btn btn-primary btn-block" type="submit">
+                <span class="btn-label">Save name</span>
+              </button>
+              <p class="form-msg" id="name-status"></p>
+            </form>
+
+            <form class="panel" id="password-form">
+              <h2 class="panel-title">Password</h2>
+              <p class="panel-sub">You stay signed in on this device after changing it.</p>
+              <label class="field">
+                <span class="field-label">Current password</span>
+                <input name="currentPassword" type="password" autocomplete="current-password" required />
+              </label>
+              <label class="field">
+                <span class="field-label">New password</span>
+                <input name="newPassword" type="password" autocomplete="new-password"
+                       minlength="8" placeholder="At least 8 characters" required />
+              </label>
+              <button class="btn btn-primary btn-block" type="submit">
+                <span class="btn-label">Change password</span>
+              </button>
+              <p class="form-msg" id="password-status"></p>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ============ player ============ -->
+    <div class="overlay" id="player-overlay" hidden>
+      <div class="modal modal-wide">
+        <header class="modal-head">
+          <h3 id="player-title"></h3>
+          <button class="icon-btn" id="player-close" aria-label="Close">&times;</button>
+        </header>
+        <video id="player" controls playsinline preload="metadata"></video>
+        <footer class="modal-foot">
+          <span class="muted-sm" id="player-meta"></span>
+          <button class="btn btn-danger" id="player-delete">Delete</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- ============ lightbox ============ -->
+    <div class="overlay" id="photo-overlay" hidden>
+      <div class="modal modal-wide">
+        <header class="modal-head">
+          <h3 id="photo-title"></h3>
+          <button class="icon-btn" id="photo-close" aria-label="Close">&times;</button>
+        </header>
+        <div class="lightbox-stage">
+          <button class="nav-arrow nav-prev" id="photo-prev" aria-label="Previous">&#8249;</button>
+          <img id="photo-full" alt="" />
+          <button class="nav-arrow nav-next" id="photo-next" aria-label="Next">&#8250;</button>
+        </div>
+        <footer class="modal-foot">
+          <span class="muted-sm" id="photo-meta"></span>
+          <button class="btn btn-danger" id="photo-delete">Delete</button>
+        </footer>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

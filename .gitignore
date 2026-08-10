@@ -1,0 +1,9 @@
+node_modules/
+storage/
+.env
+*.log
+
+# Generated fixtures - the scripts in testmedia/ rebuild them on demand.
+testmedia/*.mp4
+testmedia/*.jpg
+testmedia/*.png
