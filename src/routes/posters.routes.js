@@ -57,4 +57,29 @@ router.get(
   })
 );
 
+/**
+ * GET /api/posters/:id/sprite - the scrub-preview sheet for a video.
+ *
+ * Every frame of the video in miniature, so it gets exactly the poster's
+ * access rules and cache policy.
+ */
+router.get(
+  '/:id/sprite',
+  requireAuth({ allowQuery: true }),
+  asyncHandler(async (req, res) => {
+    const asset = await loadViewableAsset(req, { requireReady: false });
+    if (!asset.spriteKey) return res.status(404).json({ error: 'No preview sprite for this asset' });
+
+    res.sendFile(
+      asset.spriteKey,
+      { root: POSTER_DIR, headers: { 'Cache-Control': 'private, max-age=3600' } },
+      (err) => {
+        if (!err) return;
+        if (res.headersSent) return res.destroy();
+        res.status(410).json({ error: 'Sprite is missing from storage' });
+      }
+    );
+  })
+);
+
 module.exports = router;

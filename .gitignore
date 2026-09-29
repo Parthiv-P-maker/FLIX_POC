@@ -1,5 +1,7 @@
 node_modules/
 storage/
+# Downloaded CLIP weights (~150 MB), fetched on first run.
+.model-cache/
 .env
 *.log
 

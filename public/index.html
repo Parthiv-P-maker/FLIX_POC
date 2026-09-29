@@ -2,8 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>FlixDrive</title>
+    <meta name="description" content="Your films and photos, in one place." />
+    <meta name="theme-color" content="#08080b" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -78,6 +85,12 @@
           <span class="logo-text">FlixDrive</span>
         </div>
 
+        <button class="search-trigger" id="palette-open" type="button" aria-label="Search everything (Ctrl+K)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 0 4.55 13.46l4.24 4.25 1.42-1.42-4.25-4.24A7.5 7.5 0 0 0 10.5 3m0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11"/></svg>
+          <span>Search</span>
+          <kbd id="palette-hint">Ctrl K</kbd>
+        </button>
+
         <nav class="nav" id="nav">
           <button class="nav-btn is-active" data-view="watch">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 6.2 4.2l11.6 6.5a1.5 1.5 0 0 1 0 2.6L6.2 19.8A1.5 1.5 0 0 1 4 18.5z"/></svg>
@@ -120,6 +133,7 @@
             </div>
           </header>
 
+          <div class="sk sk-hero" id="hero-skeleton" aria-hidden="true" hidden></div>
           <article class="hero" id="hero" hidden>
             <div class="hero-art"><img id="hero-poster" alt="" /></div>
             <div class="hero-body">
@@ -153,9 +167,18 @@
               <div class="empty-ico">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 6.2 4.2l11.6 6.5a1.5 1.5 0 0 1 0 2.6L6.2 19.8A1.5 1.5 0 0 1 4 18.5z"/></svg>
               </div>
-              <h3>No videos yet</h3>
-              <p>Upload a file and it will appear here once processing finishes.</p>
-              <button class="btn btn-soft" data-goto="upload">Go to Upload</button>
+              <h3>Your library is empty</h3>
+              <p>Upload a video and it appears here as soon as it is processed. Everything
+                 you upload stays private until you share it.</p>
+              <div class="empty-actions">
+                <button class="btn btn-primary" data-goto="upload">Upload a video</button>
+                <button class="btn btn-soft" data-goto="browse">Browse shared videos</button>
+              </div>
+              <ol class="empty-steps">
+                <li><b>Upload</b> a video or a batch of photos</li>
+                <li><b>Watch</b> anywhere, and pick up where you left off</li>
+                <li><b>Share</b> to the catalog, or send a private link</li>
+              </ol>
             </div>
           </section>
         </section>
@@ -210,11 +233,37 @@
               <h1>Photos</h1>
               <p class="page-sub" id="photos-sub">&nbsp;</p>
             </div>
-            <div class="searchbox">
+            <!-- Smart search: the server matches titles, AI tags and visual
+                 similarity. The listbox suggests tags from this library. -->
+            <div class="searchbox searchbox-smart">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 0 4.55 13.46l4.24 4.25 1.42-1.42-4.25-4.24A7.5 7.5 0 0 0 10.5 3m0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11"/></svg>
-              <input id="photo-search" type="search" placeholder="Search photos" autocomplete="off" />
+              <input id="photo-search" type="search" autocomplete="off"
+                     placeholder="Search what's in your photos"
+                     aria-label="Search photos by title or by what they show"
+                     role="combobox" aria-autocomplete="list" aria-expanded="false"
+                     aria-controls="photo-suggest" />
+              <span class="ai-badge" id="ai-badge" title="Photos are tagged by an on-device image model" hidden>AI</span>
+              <ul class="suggest" id="photo-suggest" role="listbox" aria-label="Tag suggestions" hidden></ul>
             </div>
+            <button class="btn btn-soft select-btn" id="select-toggle" type="button" aria-pressed="false">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m-1.2 14.2-4.3-4.3 1.4-1.4 2.9 2.9 5.7-5.7 1.4 1.4z"/></svg>
+              <span class="btn-label">Select</span>
+            </button>
           </header>
+
+          <!-- Selection mode: one action on many photos. -->
+          <div class="selbar" id="selbar" role="toolbar" aria-label="Selected photos" hidden>
+            <button class="icon-btn" id="sel-cancel" type="button" aria-label="Cancel selection">&times;</button>
+            <strong id="sel-count" aria-live="polite">0 selected</strong>
+            <span class="selbar-hint">Shift-click to select a range</span>
+            <span class="pc-spacer"></span>
+            <button class="btn btn-soft" id="sel-all" type="button">Select all</button>
+            <button class="btn btn-soft" id="sel-fav" type="button">Favourite</button>
+            <button class="btn btn-soft" id="sel-unfav" type="button">Unfavourite</button>
+            <button class="btn btn-danger" id="sel-delete" type="button">Delete</button>
+          </div>
+
+          <p class="search-hint" id="photo-search-hint" hidden></p>
 
           <div class="filterbar" id="photo-filters">
             <button class="chip is-active" data-filter="all">All</button>
@@ -226,6 +275,9 @@
             <span class="filter-sep" id="year-sep" hidden></span>
             <span id="year-chips"></span>
           </div>
+
+          <!-- Tags the image model found in this library, most common first. -->
+          <div class="filterbar tagbar" id="tag-chips" aria-label="Filter by tag" hidden></div>
 
           <div id="timeline"></div>
 
@@ -248,8 +300,9 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2 10.5 3.4-3.9 2.4 2.7 3-3.6L18 17z"/><circle cx="9" cy="9" r="1.6"/></svg>
             </div>
             <h3>Your timeline is empty</h3>
-            <p>Photos are grouped by the date they were taken, read from EXIF.</p>
-            <button class="btn btn-soft" data-goto="upload">Add photos</button>
+            <p>Photos are grouped by the date they were taken, and tagged automatically
+               so you can search them by what they show.</p>
+            <button class="btn btn-primary" data-goto="upload">Add photos</button>
           </div>
         </section>
 
@@ -291,7 +344,6 @@
               <button class="btn btn-primary btn-block" type="submit">
                 <span class="btn-label">Upload video</span>
               </button>
-              <div class="upload-bar" id="video-bar" hidden><i></i></div>
               <p class="form-msg" id="video-status"></p>
             </form>
 
@@ -309,7 +361,6 @@
               <button class="btn btn-primary btn-block" type="submit">
                 <span class="btn-label">Upload photos</span>
               </button>
-              <div class="upload-bar" id="photo-bar" hidden><i></i></div>
               <p class="form-msg" id="photo-status"></p>
             </form>
           </div>
@@ -380,7 +431,94 @@
           <h3 id="player-title"></h3>
           <button class="icon-btn" id="player-close" aria-label="Close">&times;</button>
         </header>
-        <video id="player" controls playsinline preload="metadata"></video>
+        <!-- Custom controls instead of the browser's: scrub previews, a speed
+             menu, keyboard shortcuts and "Up next" need a timeline we own.
+             The whole stage goes fullscreen so the controls come with it. -->
+        <div class="player-stage" id="player-stage">
+          <video id="player" playsinline preload="metadata"></video>
+
+          <div class="player-spinner" id="player-spinner" hidden><span class="spinner"></span></div>
+          <div class="player-flash" id="player-flash" aria-hidden="true"></div>
+
+          <aside class="upnext" id="upnext" aria-live="polite" hidden>
+            <div class="upnext-thumb"><img id="upnext-poster" alt="" /></div>
+            <div class="upnext-body">
+              <span class="upnext-label">Up next in <b id="upnext-count">8</b>s</span>
+              <strong id="upnext-title"></strong>
+              <div class="upnext-actions">
+                <button class="btn btn-primary" id="upnext-play" type="button">Play now</button>
+                <button class="btn btn-soft" id="upnext-cancel" type="button">Cancel</button>
+              </div>
+            </div>
+          </aside>
+
+          <div class="keys-help" id="keys-help" role="dialog" aria-label="Keyboard shortcuts" hidden>
+            <h4>Keyboard shortcuts</h4>
+            <dl>
+              <dt><kbd>Space</kbd> <kbd>K</kbd></dt><dd>Play / pause</dd>
+              <dt><kbd>J</kbd> <kbd>L</kbd></dt><dd>Back / forward 10 s</dd>
+              <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Back / forward 5 s</dd>
+              <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Volume</dd>
+              <dt><kbd>M</kbd></dt><dd>Mute</dd>
+              <dt><kbd>F</kbd></dt><dd>Fullscreen</dd>
+              <dt><kbd>&lt;</kbd> <kbd>&gt;</kbd></dt><dd>Slower / faster</dd>
+              <dt><kbd>0</kbd>–<kbd>9</kbd></dt><dd>Jump to 0–90%</dd>
+              <dt><kbd>?</kbd></dt><dd>Show this list</dd>
+            </dl>
+          </div>
+
+          <div class="pc" id="player-controls">
+            <div class="scrub" id="scrub" role="slider" tabindex="0" aria-label="Seek"
+                 aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00">
+              <div class="scrub-track">
+                <i class="scrub-buffer" id="scrub-buffer"></i>
+                <i class="scrub-played" id="scrub-played"></i>
+                <i class="scrub-knob" id="scrub-knob"></i>
+              </div>
+              <div class="scrub-preview" id="scrub-preview" hidden>
+                <div class="scrub-thumb" id="scrub-thumb"></div>
+                <span class="scrub-time" id="scrub-time">0:00</span>
+              </div>
+            </div>
+
+            <div class="pc-row">
+              <button class="pc-btn" id="pc-play" type="button" aria-label="Play">
+                <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8 19 12 7 19.2z"/></svg>
+                <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+              </button>
+              <button class="pc-btn pc-skip" id="pc-back" type="button" aria-label="Back 10 seconds">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z"/></svg><span>10</span>
+              </button>
+              <button class="pc-btn pc-skip" id="pc-fwd" type="button" aria-label="Forward 10 seconds">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z"/></svg><span>10</span>
+              </button>
+              <div class="pc-volume">
+                <button class="pc-btn" id="pc-mute" type="button" aria-label="Mute">
+                  <svg class="i-vol" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4M13 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6"/></svg>
+                  <svg class="i-muted" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9zm12.6 3 2.7-2.7-1.4-1.4-2.7 2.7-2.7-2.7-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4z"/></svg>
+                </button>
+                <input class="pc-vol" id="pc-vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+              </div>
+              <span class="pc-time" id="pc-time">0:00 / 0:00</span>
+              <span class="pc-spacer"></span>
+              <div class="pc-speed-wrap">
+                <button class="pc-btn pc-pill" id="pc-speed" type="button" aria-haspopup="true"
+                        aria-expanded="false" aria-controls="pc-speed-menu" aria-label="Playback speed">1×</button>
+                <div class="pc-menu" id="pc-speed-menu" role="group" aria-label="Playback speed" hidden></div>
+              </div>
+              <button class="pc-btn" id="pc-pip" type="button" aria-label="Picture in picture" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zm2 2v10h14V7zm7 5h6v4h-6z"/></svg>
+              </button>
+              <button class="pc-btn" id="pc-keys" type="button" aria-label="Keyboard shortcuts" aria-expanded="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v12H3zm2 2v2h2V8zm3 0v2h2V8zm3 0v2h2V8zm3 0v2h2V8zm3 0v2h2V8zM5 11v2h2v-2zm3 0v2h2v-2zm3 0v2h2v-2zm3 0v2h2v-2zm3 0v2h2v-2zM7 14v2h10v-2z"/></svg>
+              </button>
+              <button class="pc-btn" id="pc-full" type="button" aria-label="Fullscreen">
+                <svg class="i-full" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zM4 14h2v4h4v2H4zm14 0h2v6h-6v-2h4z"/></svg>
+                <svg class="i-exit" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4h2v6H4V8h4zm6 0h2v4h4v2h-6zM4 14h6v6H8v-4H4zm10 0h6v2h-4v4h-2z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
 
         <section class="about" id="player-about">
           <p class="about-text" id="player-description" hidden></p>
@@ -442,6 +580,8 @@
           </div>
         </form>
 
+        <div class="photo-tags" id="photo-tags" hidden></div>
+
         <footer class="modal-foot">
           <span class="muted-sm" id="photo-meta"></span>
           <button class="btn btn-soft" id="photo-date" hidden>
@@ -455,6 +595,42 @@
         </footer>
       </div>
     </div>
+
+    <!-- Command palette (Ctrl+K): one search across videos, the catalog,
+         photos and actions. -->
+    <div class="overlay palette-overlay" id="palette" role="dialog" aria-modal="true"
+         aria-label="Search everything" hidden>
+      <div class="palette">
+        <div class="palette-input">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 0 4.55 13.46l4.24 4.25 1.42-1.42-4.25-4.24A7.5 7.5 0 0 0 10.5 3m0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11"/></svg>
+          <input id="palette-input" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Search videos, photos and actions"
+                 role="combobox" aria-expanded="true" aria-controls="palette-list"
+                 aria-autocomplete="list" aria-label="Search videos, photos and actions" />
+          <kbd>Esc</kbd>
+        </div>
+        <div class="palette-list" id="palette-list" role="listbox" aria-label="Results"></div>
+        <footer class="palette-foot">
+          <span><kbd>↑</kbd> <kbd>↓</kbd> move</span>
+          <span><kbd>Enter</kbd> open</span>
+          <span class="palette-status" id="palette-status" aria-live="polite"></span>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Upload tray: follows the user across views while files upload and the
+         worker processes them. -->
+    <aside class="tray" id="tray" aria-labelledby="tray-title" hidden>
+      <header class="tray-head">
+        <strong id="tray-title">Uploads</strong>
+        <button class="icon-btn tray-btn" id="tray-min" type="button"
+                aria-expanded="true" aria-controls="tray-list" aria-label="Collapse uploads">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+        </button>
+        <button class="icon-btn tray-btn" id="tray-close" type="button" aria-label="Clear finished uploads">&times;</button>
+      </header>
+      <ul class="tray-list" id="tray-list" aria-live="polite"></ul>
+    </aside>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 

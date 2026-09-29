@@ -78,6 +78,10 @@ async function main() {
     // The suite hammers login and register on purpose; the production defaults
     // would start returning 429 partway through and fail unrelated checks.
     RATE_LIMIT_LOGIN: '10000',
+    // The API suite runs without the CLIP model: a 150 MB download on a
+    // marker's first `npm test` is the same trap mongodb-memory-server would
+    // be. The model itself is covered by `npm run test:ml`.
+    ML_ENABLED: 'false',
     RATE_LIMIT_REGISTER: '10000',
   };
 

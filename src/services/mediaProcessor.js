@@ -1,10 +1,12 @@
 const path = require('path');
+const { execFile } = require('child_process');
 const exifr = require('exifr');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const ffprobeStatic = require('ffprobe-static');
 const MediaAsset = require('../models/MediaAsset');
 const { POSTER_DIR, sourcePathFor } = require('../config/paths');
+const tagger = require('./imageTagger');
 
 // Static binaries ship with npm install, so there is no system ffmpeg
 // to install and no PATH difference between your machine and a grader's.
@@ -46,6 +48,67 @@ function captureThumbnail(filePath, outputName) {
       .on('error', reject)
       .save(path.join(POSTER_DIR, outputName));
   });
+}
+
+/**
+ * Scrub-preview sprite: up to 100 small frames from across the video, tiled
+ * into one JPEG. The player shows the frame under the cursor while you hover
+ * the timeline, so one image load covers every preview for the whole film.
+ *
+ * `fps=1/interval` samples a frame every `interval` seconds and `tile` packs
+ * them 10 across; tile flushes a part-filled sheet at end of stream, so the
+ * last row may be short. The layout is measured back off the written file
+ * rather than predicted, because scale=-2 rounding decides the real height.
+ */
+const SPRITE_COLS = 10;
+const SPRITE_MAX_FRAMES = 100;
+const SPRITE_FRAME_WIDTH = 160;
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    execFile(ffmpegStatic, args, { windowsHide: true }, (err, _out, stderr) =>
+      err ? reject(new Error(String(stderr || err.message).trim().split('\n').pop())) : resolve());
+  });
+}
+
+async function captureSprite(asset, filePath) {
+  const duration = asset.durationSec || 0;
+  if (duration < 2) return null;   // nothing to scrub through
+
+  const interval = Math.max(1, duration / SPRITE_MAX_FRAMES);
+  const count = Math.max(1, Math.ceil(duration / interval));
+  const rows = Math.ceil(count / SPRITE_COLS);
+  const cols = Math.min(SPRITE_COLS, count);
+  const name = `${asset._id}-sprite.jpg`;
+  const out = path.join(POSTER_DIR, name);
+
+  const filter = `fps=1/${interval},scale=${SPRITE_FRAME_WIDTH}:-2,tile=${cols}x${rows}`;
+  const base = ['-v', 'error', '-y'];
+  const tail = ['-i', filePath, '-vf', filter, '-frames:v', '1', '-q:v', '6', out];
+
+  // Decoding every frame of a two-hour film takes minutes. Keyframes only is
+  // an order of magnitude faster and plenty for a thumbnail - but a short
+  // clip may have a single keyframe, so it only kicks in for long videos.
+  if (duration > 300) {
+    await runFfmpeg([...base, '-skip_frame', 'nokey', ...tail]).catch(() => runFfmpeg([...base, ...tail]));
+  } else {
+    await runFfmpeg([...base, ...tail]);
+  }
+
+  const meta = await probe(out);
+  const sheet = (meta.streams || [])[0];
+  if (!sheet?.width) throw new Error('Sprite sheet was not written');
+
+  asset.spriteKey = name;
+  asset.sprite = {
+    cols,
+    rows,
+    count,
+    interval,
+    width: Math.round(sheet.width / cols),
+    height: Math.round(sheet.height / rows),
+  };
+  return name;
 }
 
 function isValidDate(d) {
@@ -113,6 +176,28 @@ async function processVideo(asset, sourcePath) {
   const posterName = `${asset._id}.png`;
   await capturePoster(sourcePath, posterAt, posterName);
   asset.posterKey = posterName;
+
+  // Best effort: a video without scrub previews still plays perfectly well,
+  // so a sprite failure is logged and the video still becomes 'ready'.
+  await captureSprite(asset, sourcePath).catch((err) =>
+    console.error(`[worker] sprite failed for ${asset._id}: ${err.message}`));
+}
+
+/**
+ * Sprite-only job for videos processed before sprites existed. Uses
+ * updateOne for the same reason the tagger does: the owner may have renamed
+ * or shared the video since, and saving a stale document would undo that.
+ */
+async function processSprite(assetId) {
+  const asset = await MediaAsset.findById(assetId);
+  if (!asset || asset.kind !== 'video' || asset.status !== 'ready' || asset.spriteKey) return;
+  try {
+    if (!(await captureSprite(asset, sourcePathFor(asset)))) return;
+    await MediaAsset.updateOne({ _id: asset._id }, { $set: { spriteKey: asset.spriteKey, sprite: asset.sprite } });
+    console.log(`[worker] sprite: ${asset._id} (${asset.sprite.count} frames)`);
+  } catch (err) {
+    console.error(`[worker] sprite failed for ${asset._id}: ${err.message}`);
+  }
 }
 
 async function processPhoto(asset, sourcePath) {
@@ -166,7 +251,12 @@ async function processAsset(assetId) {
 
     asset.status = 'ready';
     asset.processingError = null;
+    // Tagging runs on its own queue after this, so the photo shows up on the
+    // timeline now and gains its tags a moment later.
+    const tag = asset.kind === 'photo' && tagger.ENABLED;
+    if (tag) asset.aiStatus = 'pending';
     await asset.save();
+    if (tag) tagger.enqueueTagging(asset._id);
 
     const detail = asset.kind === 'photo' ? `${asset.width}x${asset.height}` : `${asset.durationSec}s`;
     console.log(`[worker] ready: ${asset._id} (${asset.kind}, ${detail})`);
@@ -192,10 +282,10 @@ async function processAsset(assetId) {
 let chain = Promise.resolve();
 let queuedCount = 0;
 
-function enqueue(assetId) {
+function enqueue(assetId, job = processAsset) {
   queuedCount += 1;
   chain = chain
-    .then(() => processAsset(assetId))
+    .then(() => job(assetId))
     .catch((err) => console.error('[worker] unhandled', err))
     .finally(() => {
       queuedCount -= 1;
@@ -227,4 +317,27 @@ async function requeueInterrupted() {
   return stranded.length;
 }
 
-module.exports = { enqueue, processAsset, requeueInterrupted, getQueueDepth: () => queuedCount };
+/**
+ * Videos processed before scrub previews existed get a sprite in the
+ * background. On the same queue as new uploads - both are ffmpeg jobs - but
+ * queued after anything interrupted, so recovery comes first.
+ */
+async function backfillSprites() {
+  const missing = await MediaAsset.find({
+    kind: 'video',
+    status: 'ready',
+    spriteKey: null,
+    durationSec: { $gte: 2 },
+  }).select('_id');
+
+  missing.forEach((asset) => enqueue(asset._id, processSprite));
+  return missing.length;
+}
+
+module.exports = {
+  enqueue,
+  processAsset,
+  requeueInterrupted,
+  backfillSprites,
+  getQueueDepth: () => queuedCount,
+};

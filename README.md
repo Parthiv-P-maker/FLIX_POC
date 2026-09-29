@@ -36,9 +36,43 @@ once the worker finishes.
 
 Five views: **Watch** (hero + continue-watching + your library), **Browse**
 (the shared catalog — trending, new, and other members' uploads, with search),
-**Photos** (capture-date timeline, justified grid, favourites and filters),
-**Upload** (drag-and-drop with a progress readout), and **Profile** (library
+**Photos** (capture-date timeline, justified grid, favourites, AI tags, smart
+search and bulk select), **Upload** (drag-and-drop), and **Profile** (library
 stats, rename, password change).
+
+Across the app:
+
+- **Player** with its own controls: thumbnail previews while scrubbing, a
+  speed menu, picture-in-picture, fullscreen, YouTube-style keyboard shortcuts
+  (press <kbd>?</kbd> in the player) and an "Up next" card that plays the next
+  video in the row it was opened from.
+- **Upload tray** in the corner that tracks every upload and its processing
+  across views. Several uploads can run at once, and each can be cancelled.
+- **Command palette** (<kbd>Ctrl</kbd>+<kbd>K</kbd> or <kbd>/</kbd>): one
+  search across your videos, the catalog and your photos, plus quick actions.
+- **Skeleton loaders** while the first data arrives, and written empty states.
+- **Phone layout** with a bottom tab bar that clears the home indicator.
+- **Installable** as an app (manifest + service worker). The worker caches only
+  the app shell, never anything under `/api`.
+
+## Smart photo search
+
+Every photo is tagged by CLIP (`Xenova/clip-vit-base-patch32`, quantised),
+running in-process through transformers.js — no Python, no API key. The first
+start downloads ~150 MB into `.model-cache/`; after that it loads in about a
+second and tags a photo in ~0.1 s. Photos become `ready` before they are
+tagged, and the tagger runs on its own queue so it never delays a thumbnail.
+
+- **Tags** are zero-shot: each label in `src/config/tagVocabulary.js` is a
+  caption, and a photo keeps the (up to four) captions the model clearly
+  prefers. Adding a tag is adding a line. Changing the vocabulary or the model
+  re-tags the library at the next boot.
+- **Search** (`GET /api/photos?q=`) matches a photo if its title contains the
+  text, *or* it carries the tags the words name ("puppies" → dog), *or* CLIP
+  ranks it among the closest images to the text — so "girl with pink eyes"
+  works with no tag for it.
+- `ML_ENABLED=false` turns it off and search falls back to titles. `npm test`
+  runs that way; `npm run test:ml` checks the model itself.
 
 Files land in `storage/uploads` (video), `storage/photos` (photo originals) and
 `storage/posters` (posters + thumbnails). All are gitignored. Set
@@ -59,8 +93,12 @@ src/
     errorHandler.js       thrown error -> HTTP response; orphan cleanup
   routes/                 auth, profile, assets, catalog, photos,
                           stream, posters, share, progress
+  config/tagVocabulary.js the labels the image classifier can assign
   services/
-    mediaProcessor.js     ffmpeg/ffprobe worker, in-process queue, boot recovery
+    mediaProcessor.js     ffmpeg/ffprobe worker, in-process queue, boot recovery,
+                          scrub-preview sprites
+    imageTagger.js        CLIP tagging queue, smart search, boot backfill
+    assetCleanup.js       deletes an asset's files and rows (single and bulk)
     mailer.js             outbound mail seam (console in development)
   utils/
     rangeStream.js        Range parsing + safe piping, shared by both routes
@@ -71,9 +109,11 @@ public/
   share.html share.js     standalone viewer for a share link (no account)
   reset.html reset.js     standalone password reset page
   styles.css
+  sw.js manifest.webmanifest icons/   the installable app shell
 testmedia/
   run-tests.js            `npm test` — owns the whole lifecycle
-  e2e.js                  170 assertions
+  e2e.js                  198 assertions
+  ml-check.js             `npm run test:ml` — the image model itself
   seed.js exif.js         demo data, EXIF fixture builder
 ```
 
@@ -139,7 +179,7 @@ reachable.
 | PATCH | `/api/profile` | `{ displayName }` |
 | PUT | `/api/profile/password` | `{ currentPassword, newPassword }` |
 | POST | `/api/assets` | multipart, field `video`. Returns **202**. `visibility=public` shares on upload |
-| GET | `/api/assets` | Your video library. `?limit=`, `?page=`, `?kind=photo\|all` |
+| GET | `/api/assets` | Your video library. `?limit=`, `?page=`, `?kind=photo\|all`, `?q=` title search |
 | GET | `/api/assets/:id` | Poll this until `status === "ready"` |
 | PATCH | `/api/assets/:id` | Owner only. `{ shared?, visibility?, favorite?, title?, description?, capturedAt? }` |
 | POST | `/api/assets/:id/view` | Bumps the play count behind the Trending rail |
@@ -147,9 +187,11 @@ reachable.
 | GET | `/api/catalog` | **Everyone's** public videos. `?sort=new\|trending`, `?q=`, `?mine=exclude` |
 | GET | `/api/catalog/summary` | Totals for the Browse header |
 | POST | `/api/photos` | multipart, field `photos`, up to 20. Returns **202** |
-| GET | `/api/photos` | Timeline grouped by capture month. `?q=`, `?favorite=1`, `?year=`, `?page=` |
+| GET | `/api/photos` | Timeline grouped by capture month. `?q=` smart search, `?tag=`, `?favorite=1`, `?year=`, `?page=`. Returns tag facets |
+| POST | `/api/photos/bulk` | `{ ids, action: favorite\|unfavorite\|delete }`. Only the caller's photos are touched |
 | GET | `/api/stream/:id?token=MEDIA` | Range-request playback (also serves photo originals) |
 | GET | `/api/posters/:id?token=MEDIA` | Poster frame or photo thumbnail |
+| GET | `/api/posters/:id/sprite?token=MEDIA` | Scrub-preview sprite sheet for a video |
 | GET | `/api/share/:slug` | **No auth.** Metadata for a share link |
 | GET | `/api/share/:slug/media` | **No auth.** Range-request playback |
 | GET | `/api/share/:slug/poster` | **No auth.** Poster for a share link |
@@ -278,13 +320,34 @@ identically whether or not the address is registered.
 that nothing was sent — a reset that appears to work and silently delivers
 nothing would be worse. Wiring up nodemailer is a change to that one file.
 
+## Hosting a demo
+
+Enough to put it online for a demo, not a production setup:
+
+- **Database:** a free MongoDB Atlas cluster; put its connection string in
+  `MONGO_URI`.
+- **Environment:** `JWT_SECRET` (a long random string), `MONGO_URI`, and
+  `TRUST_PROXY=1` on any host that puts a proxy in front of the app (Render,
+  Railway, Fly, nginx). `PORT` is usually set by the host.
+- **Memory:** the image model plus ffmpeg wants ~1 GB of RAM. On a 512 MB
+  plan set `ML_ENABLED=false` — tagging and visual search switch off, and
+  everything else keeps working.
+- **Storage:** uploads live on local disk. Most hosts wipe it on every
+  redeploy, so either attach a persistent disk and point `STORAGE_ROOT` at it,
+  or expect to re-upload demo files after a deploy.
+- **Uploads:** proxies in front of the host often cap request size (Cloudflare
+  at 100 MB), so keep demo videos small.
+
+Build command `npm install`, start command `npm start`. The first boot
+downloads the model, so the first request after a deploy is slower.
+
 ## Testing
 
 ```bash
 npm test
 ```
 
-170 assertions. The runner owns the whole lifecycle: it picks a free port,
+198 assertions. The runner owns the whole lifecycle: it picks a free port,
 creates a throwaway database and a temp storage directory, boots the server,
 runs the suite, and tears all of it down in a `finally` — so it never touches
 your dev data and a failed run leaves nothing behind. It also fails a run where

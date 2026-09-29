@@ -298,6 +298,22 @@ async function pollUntilReady(id, token, tries = 40) {
     check('the old /static/posters mount is gone', legacy.status === 404, `got ${legacy.status}`);
   }
 
+  // Scrub previews: one tiled sheet per video, described by `sprite`.
+  {
+    const s = asset && asset.sprite;
+    check('scrub-preview sprite was generated', !!(s && s.url && s.count > 0), s && JSON.stringify(s));
+    check('sprite layout is consistent',
+      !!(s && s.cols * s.rows >= s.count && s.width > 0 && s.height > 0 && s.interval > 0));
+    if (s) {
+      const res = await fetch(`${s.url}?token=${mediaToken}`);
+      check('sprite served through the auth route',
+        res.status === 200 && res.headers.get('content-type').startsWith('image/'), `got ${res.status}`);
+      await res.arrayBuffer();
+      const anon = await fetch(s.url);
+      check('sprite refuses an unauthenticated request', anon.status === 401, `got ${anon.status}`);
+    }
+  }
+
   // ---- range streaming (the critical one) -----------------------------
   console.log('\nrange streaming');
   {
@@ -1004,6 +1020,37 @@ async function pollUntilReady(id, token, tries = 40) {
     const { body: meta } = await json(`/api/photos?q=${encodeURIComponent('.*')}`, { headers: auth });
     check('photo search escapes regex metacharacters', meta.total === 0, `total=${meta.total}`);
   }
+  // Smart search with the model switched off (run-tests.js sets
+  // ML_ENABLED=false). Everything must degrade to the old title search rather
+  // than erroring; the model itself is covered by `npm run test:ml`.
+  {
+    const { body } = await json('/api/photos', { headers: auth });
+    const items = body.groups.flatMap((g) => g.items);
+    check('photos carry a tags array', items.length > 0 && items.every((p) => Array.isArray(p.tags)));
+    check('no embedding is ever sent to the client', items.every((p) => !('embedding' in p)));
+    check('tag facet is present and empty without the model',
+      Array.isArray(body.facets.tags) && body.facets.tags.length === 0);
+    check('response says the model is off', body.ai && body.ai.enabled === false && body.ai.tagging === 0,
+      JSON.stringify(body.ai));
+    check('untagged photos report no AI status', items.every((p) => p.aiStatus === null));
+    check('no search block without a query', body.search === null);
+
+    const { res, body: hit } = await json('/api/photos?q=photo1', { headers: auth });
+    check('search falls back to keyword mode', res.status === 200 && hit.search?.mode === 'keyword',
+      JSON.stringify(hit.search));
+
+    const { body: puppies } = await json('/api/photos?q=puppies', { headers: auth });
+    check('a tag word in the query is resolved to its tag',
+      puppies.search?.tags?.[0]?.key === 'dog', JSON.stringify(puppies.search));
+    check('resolving a tag does not match untagged photos', puppies.total === 0, `total=${puppies.total}`);
+
+    const { body: byTag } = await json('/api/photos?tag=beach', { headers: auth });
+    check('tag filter with no tagged photos returns empty', byTag.total === 0, `total=${byTag.total}`);
+
+    const { body: health } = await json('/api/health');
+    check('health reports the tagger as disabled', health.tagger?.status === 'disabled',
+      JSON.stringify(health.tagger));
+  }
   {
     const { res } = await json(`/api/assets/${photoIds[0]}`, {
       method: 'PATCH',
@@ -1011,6 +1058,57 @@ async function pollUntilReady(id, token, tries = 40) {
       body: JSON.stringify({ favorite: 'yes-please' }),
     });
     check('non-boolean favorite rejected with 400', res.status === 400, `got ${res.status}`);
+  }
+
+  // ---- library search (command palette) ---------------------------------
+  console.log('\nlibrary search');
+  {
+    const { body: hit } = await json(`/api/assets?q=${encodeURIComponent('E2E test')}`, { headers: auth });
+    check('library search matches titles', hit.assets.some((a) => String(a.id) === String(assetId)),
+      `total=${hit.total}`);
+    const { body: miss } = await json('/api/assets?q=zzz-not-a-title', { headers: auth });
+    check('library search excludes non-matches', miss.total === 0, `total=${miss.total}`);
+    const { body: meta } = await json(`/api/assets?q=${encodeURIComponent('.*')}`, { headers: auth });
+    check('library search escapes regex metacharacters', meta.total === 0, `total=${meta.total}`);
+  }
+
+  // ---- bulk photo actions (selection mode) ------------------------------
+  console.log('\nbulk photo actions');
+  {
+    const bulk = (headers, body) => json('/api/photos/bulk', {
+      method: 'POST', headers: jsonAuth(headers), body: JSON.stringify(body),
+    });
+
+    const { res: badAction } = await bulk(auth, { ids: photoIds, action: 'explode' });
+    check('bulk rejects an unknown action', badAction.status === 400, `got ${badAction.status}`);
+    const { res: noIds } = await bulk(auth, { ids: [], action: 'favorite' });
+    check('bulk rejects an empty id list', noIds.status === 400, `got ${noIds.status}`);
+
+    const { body: stranger } = await bulk(otherAuth, { ids: photoIds, action: 'delete' });
+    check("bulk skips photos that are not the caller's", stranger.count === 0, `count=${stranger.count}`);
+
+    const { body: fav } = await bulk(auth, { ids: [...photoIds, 'not-an-id'], action: 'favorite' });
+    check('bulk favourite reports the photos it changed', fav.count === photoIds.length, `count=${fav.count}`);
+    const { body: favList } = await json('/api/photos?favorite=1', { headers: auth });
+    check('bulk favourite shows up in the favourites filter', favList.total >= photoIds.length,
+      `total=${favList.total}`);
+    await bulk(auth, { ids: photoIds, action: 'unfavorite' });
+    const { body: unfav } = await json(`/api/assets/${photoIds[0]}`, { headers: auth });
+    check('bulk unfavourite clears the flag', unfav.asset && unfav.asset.favorite === false);
+
+    const fd = new FormData();
+    fd.append('photos', filePart(path.join(MEDIA, 'photo1.jpg'), 'image/jpeg'));
+    fd.append('photos', filePart(path.join(MEDIA, 'photo2.png'), 'image/png'));
+    const { body: up } = await json('/api/photos', { method: 'POST', headers: auth, body: fd });
+    const doomed = (up.assets || []).map((a) => a.id);
+    for (const id of doomed) await pollUntilReady(id, token);
+
+    const { body: del } = await bulk(auth, { ids: doomed, action: 'delete' });
+    check('bulk delete removes every selected photo', del.count === 2, `count=${del.count}`);
+    const gone = await Promise.all(doomed.map((id) => json(`/api/assets/${id}`, { headers: auth })));
+    check('bulk-deleted photos are gone', gone.every(({ res }) => res.status === 404));
+    const { body: kept } = await json(`/api/assets/${photoIds[0]}`, { headers: auth });
+    check('bulk delete leaves unselected photos alone', !!kept.asset);
   }
 
   // ---- delete -----------------------------------------------------------
@@ -1024,6 +1122,9 @@ async function pollUntilReady(id, token, tries = 40) {
 
     const { body: cont } = await json('/api/progress/continue', { headers: auth });
     check('progress rows cleaned up', !cont.items.some((i) => String(i.asset.id) === String(assetId)));
+
+    const sprite = await fetch(`${BASE}/api/posters/${assetId}/sprite?token=${mediaToken}`);
+    check('sprite is unreachable once the video is deleted', sprite.status === 404, `got ${sprite.status}`);
   }
   for (const id of photoIds) {
     await json(`/api/assets/${id}`, { method: 'DELETE', headers: auth });

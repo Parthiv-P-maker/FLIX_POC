@@ -9,7 +9,8 @@ const morgan = require('morgan');
 const connectDB = require('./config/db');
 const { PUBLIC_DIR } = require('./config/paths');
 const errorHandler = require('./middleware/errorHandler');
-const { getQueueDepth, requeueInterrupted } = require('./services/mediaProcessor');
+const { getQueueDepth, requeueInterrupted, backfillSprites } = require('./services/mediaProcessor');
+const tagger = require('./services/imageTagger');
 
 // Every token this process issues or accepts is signed with it, so booting
 // without one would silently accept `undefined` as the secret.
@@ -19,6 +20,17 @@ if (!process.env.JWT_SECRET) {
 }
 
 const app = express();
+
+// Behind a hosting proxy (Render, Railway, Fly, nginx) every request arrives
+// from the proxy's address over plain http. Without this the login limiter
+// would count all visitors as one client, and asset URLs would be built as
+// http:// on an https:// site. Opt-in, because trusting X-Forwarded-For with
+// no proxy in front lets any client forge its address past the limiter.
+// TRUST_PROXY is the number of proxy hops, usually 1.
+if (process.env.TRUST_PROXY) {
+  const hops = Number(process.env.TRUST_PROXY);
+  app.set('trust proxy', Number.isInteger(hops) ? hops : process.env.TRUST_PROXY);
+}
 
 app.use(
   helmet({
@@ -78,7 +90,12 @@ app.use(morgan('dev'));
 app.use(express.static(PUBLIC_DIR));
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, queueDepth: getQueueDepth(), uptimeSec: Math.round(process.uptime()) });
+  res.json({
+    ok: true,
+    queueDepth: getQueueDepth(),
+    tagger: { status: tagger.status(), queueDepth: tagger.getTagQueueDepth() },
+    uptimeSec: Math.round(process.uptime()),
+  });
 });
 
 app.use('/api/auth', require('./routes/auth.routes'));
@@ -126,6 +143,16 @@ connectDB()
     if (recovered > 0) {
       console.log(`[server] re-queued ${recovered} asset(s) interrupted by the last shutdown`);
     }
+
+    const unsprited = await backfillSprites();
+    if (unsprited > 0) console.log(`[worker] queued ${unsprited} video(s) for scrub previews`);
+
+    // Photos uploaded before tagging existed, or tagged by an older model or
+    // vocabulary, catch up in the background. Neither call blocks startup:
+    // the model loads while the server is already answering requests.
+    tagger.warmUp();
+    const untagged = await tagger.backfillTags();
+    if (untagged > 0) console.log(`[tagger] queued ${untagged} photo(s) for tagging`);
 
     const server = app.listen(PORT, () =>
       console.log(`[server] listening on http://localhost:${PORT}`)

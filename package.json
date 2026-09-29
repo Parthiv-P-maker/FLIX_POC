@@ -10,9 +10,11 @@
     "seed": "node testmedia/seed.js",
     "test": "node testmedia/run-tests.js",
     "test:e2e": "node testmedia/e2e.js",
+    "test:ml": "node testmedia/ml-check.js",
     "lint": "eslint ."
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

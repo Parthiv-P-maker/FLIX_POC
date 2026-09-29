@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const mongoose = require('mongoose');
+const { VOCABULARY } = require('../config/tagVocabulary');
 
 // Status is a state machine: uploading -> processing -> ready | failed
 const STATUSES = ['uploading', 'processing', 'ready', 'failed'];
@@ -9,6 +10,13 @@ const VISIBILITIES = ['private', 'unlisted', 'public'];
 // Ownership, visibility, the processing state machine and the delete path are
 // identical for both; only the worker branch differs.
 const KINDS = ['video', 'photo'];
+
+const spriteSchema = new mongoose.Schema(
+  {
+    cols: Number, rows: Number, count: Number, interval: Number, width: Number, height: Number,
+  },
+  { _id: false }
+);
 
 const mediaAssetSchema = new mongoose.Schema(
   {
@@ -31,6 +39,12 @@ const mediaAssetSchema = new mongoose.Schema(
     width: { type: Number, default: null },
     height: { type: Number, default: null },
     posterKey: { type: String, default: null },
+
+    // Videos only: a sheet of small frames the player shows while scrubbing.
+    // `sprite` is its layout - `count` frames, one every `interval` seconds,
+    // `cols` across, each `width` x `height` px.
+    spriteKey: { type: String, default: null },
+    sprite: { type: spriteSchema, default: null },
 
     // When the photo was taken, not when it was uploaded - the timeline sorts
     // on this. Falls back to the file's mtime when there is no usable EXIF.
@@ -59,6 +73,21 @@ const mediaAssetSchema = new mongoose.Schema(
     // Uniqueness is enforced by a partial index below, not here; see why.
     shareSlug: { type: String, default: null },
 
+    // Written by services/imageTagger.js after the photo is 'ready'. Tags are
+    // the classifier's confident labels - keys from config/tagVocabulary.js
+    // with the model's probability. The embedding is the raw CLIP vector
+    // behind free-text search: never sent to a client, and select: false so
+    // only the search itself ever reads it off disk.
+    tags: {
+      type: [{ _id: false, key: { type: String, required: true }, score: { type: Number, default: 0 } }],
+      default: [],
+    },
+    embedding: { type: Buffer, default: null, select: false },
+    // null until the tagger first sees the photo - and for ever when ML is off.
+    aiStatus: { type: String, enum: ['pending', 'done', 'failed'], default: null },
+    // Which model + vocabulary produced the tags; boot re-tags any mismatch.
+    aiVersion: { type: String, default: null },
+
     // Bumped once per playback by POST /api/assets/:id/view, not by the range
     // route - a single viewing issues dozens of range requests.
     viewCount: { type: Number, default: 0 },
@@ -70,6 +99,9 @@ mediaAssetSchema.index({ ownerId: 1, createdAt: -1 });
 
 // The photo timeline pages through one owner's photos newest-capture-first.
 mediaAssetSchema.index({ ownerId: 1, kind: 1, capturedAt: -1 });
+
+// The tag filter and the tag facet both start from one owner's photos.
+mediaAssetSchema.index({ ownerId: 1, kind: 1, 'tags.key': 1 });
 
 // The catalog reads across every owner, so it needs an index that does not
 // start with ownerId. Both rails filter the same prefix and differ only in
@@ -97,6 +129,8 @@ mediaAssetSchema.index(
  * caller has populated it. The catalog needs the display name; the library
  * does not populate and must not crash. This normalises both shapes.
  */
+const TAG_LABELS = new Map(VOCABULARY.map((v) => [v.key, v.label]));
+
 function ownerOf(asset) {
   const raw = asset.ownerId;
   if (raw && typeof raw === 'object' && raw.displayName) {
@@ -161,9 +195,23 @@ mediaAssetSchema.methods.toPublic = function (req) {
     // the whole body. Named differently so a client cannot mistake a photo
     // for something it should hand to a <video> element.
     json.originalUrl = `${base}/api/stream/${this._id}`;
+    // Labels come from the live vocabulary, so renaming one needs no re-tag.
+    // A key the vocabulary no longer has is dropped rather than shown raw.
+    json.tags = (this.tags || [])
+      .filter((t) => TAG_LABELS.has(t.key))
+      .map((t) => ({ key: t.key, label: TAG_LABELS.get(t.key), score: t.score }));
+    json.aiStatus = this.aiStatus || null;
   } else {
     json.durationSec = this.durationSec;
     json.streamUrl = `${base}/api/stream/${this._id}`;
+    // Same auth as the poster; the client appends ?token= the same way.
+    const s = this.sprite;
+    json.sprite = this.spriteKey && s
+      ? {
+        url: `${base}/api/posters/${this._id}/sprite`,
+        cols: s.cols, rows: s.rows, count: s.count, interval: s.interval, width: s.width, height: s.height,
+      }
+      : null;
   }
 
   return json;

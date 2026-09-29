@@ -1,14 +1,12 @@
 const express = require('express');
-const fs = require('fs/promises');
-const path = require('path');
 const MediaAsset = require('../models/MediaAsset');
 const WatchProgress = require('../models/WatchProgress');
 const { requireAuth } = require('../middleware/auth');
 const { uploadVideo } = require('../middleware/upload');
 const { enqueue } = require('../services/mediaProcessor');
+const { deleteAsset } = require('../services/assetCleanup');
 const asyncHandler = require('../utils/asyncHandler');
 const { textField } = require('../utils/formField');
-const { POSTER_DIR, sourcePathFor } = require('../config/paths');
 
 const router = express.Router();
 router.use(requireAuth());
@@ -66,6 +64,10 @@ router.get(
     const filter = { ownerId: req.user._id };
     if (req.query.kind !== 'all') filter.kind = req.query.kind || 'video';
     if (req.query.status) filter.status = req.query.status;
+    // Title search, for the command palette. Escaped for the same reason as
+    // the catalog's: "a.*" is a title to look for, not a pattern.
+    const q = String(req.query.q || '').trim().slice(0, 200);
+    if (q) filter.title = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
     const [assets, total] = await Promise.all([
       MediaAsset.find(filter)
@@ -240,16 +242,7 @@ router.delete(
     const asset = await MediaAsset.findOne({ _id: req.params.id, ownerId: req.user._id });
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
-    await Promise.allSettled([
-      fs.unlink(sourcePathFor(asset)),
-      asset.posterKey ? fs.unlink(path.join(POSTER_DIR, asset.posterKey)) : Promise.resolve(),
-    ]);
-
-    await Promise.all([
-      MediaAsset.deleteOne({ _id: asset._id }),
-      WatchProgress.deleteMany({ assetId: asset._id }),
-    ]);
-
+    await deleteAsset(asset);
     res.json({ deleted: true, id: asset._id });
   })
 );
