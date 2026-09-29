@@ -25,8 +25,8 @@
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.5.1",
-    "morgan": "^1.10.0",
-    "multer": "^2.0.1"
+    "morgan": "^1.12.1",
+    "multer": "^2.4.0"
   },
   "devDependencies": {
     "eslint": "^10.11.0",
