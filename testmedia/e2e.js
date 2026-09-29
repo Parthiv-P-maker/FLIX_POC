@@ -138,6 +138,122 @@ async function pollUntilReady(id, token, tries = 40) {
     check('minting one needs a session', noAuth.status === 401, `got ${noAuth.status}`);
   }
 
+  // ---- password reset ----------------------------------------------------
+  // Delivery is stubbed, so the raw token is read back from the database the
+  // way the mail would have carried it. Everything else is the real flow.
+  console.log('\npassword reset');
+  {
+    const mongoose = require('mongoose');
+    const conn = await mongoose.createConnection(process.env.MONGO_URI).asPromise();
+    const resets = conn.db.collection('passwordresets');
+    const users = conn.db.collection('users');
+    const crypto = require('crypto');
+    const hash = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+    const { res: unknownRes, body: unknownBody } = await json('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: `nobody-${Date.now()}@test.local` }),
+    });
+    check('forgot-password accepts an unknown email', unknownRes.status === 200);
+
+    const { body: knownBody } = await json('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    check('it answers identically for a known one, so accounts cannot be enumerated',
+      knownBody.message === unknownBody.message, knownBody.message);
+    check('no row is created for an address with no account',
+      await resets.countDocuments({}) === 1, `${await resets.countDocuments({})} rows`);
+
+    // The raw token is never stored, so reproduce it the only way possible:
+    // mint a known one and confirm the stored hash matches.
+    const stored = await resets.findOne({});
+    check('the token is stored hashed, never in the clear',
+      !!stored.tokenHash && stored.tokenHash.length === 64 && !stored.token);
+    check('it carries an expiry', stored.expiresAt instanceof Date && stored.expiresAt > new Date());
+
+    // Drive the flow with a token we control, written through the same hash.
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await resets.updateOne({ _id: stored._id }, { $set: { tokenHash: hash(rawToken) } });
+
+    const short = await json('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, newPassword: 'short' }),
+    });
+    check('a too-short new password is rejected', short.res.status === 400, `got ${short.res.status}`);
+
+    const bogus = await json('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'f'.repeat(64), newPassword: 'brand-new-password' }),
+    });
+    check('an unknown token is rejected', bogus.res.status === 400, `got ${bogus.res.status}`);
+
+    const ok = await json('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, newPassword: 'brand-new-password' }),
+    });
+    check('a valid token resets the password', ok.res.status === 200, `got ${ok.res.status}`);
+    check('the reset does NOT hand back a session', !ok.body.token);
+
+    const replay = await json('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: rawToken, newPassword: 'another-password-again' }),
+    });
+    check('the same token cannot be used twice', replay.res.status === 400, `got ${replay.res.status}`);
+
+    const newLogin = await json('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'brand-new-password' }),
+    });
+    check('the new password works', newLogin.res.status === 200, `got ${newLogin.res.status}`);
+
+    const oldLogin = await json('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'password123' }),
+    });
+    check('the old password no longer does', oldLogin.res.status === 401, `got ${oldLogin.res.status}`);
+
+    // Requesting again must retire the first, or every link ever issued stays
+    // live until it expires.
+    await json('/api/auth/forgot-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    await json('/api/auth/forgot-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const live = await resets.countDocuments({ userId: (await users.findOne({ email }))._id });
+    check('a second request retires the first', live === 1, `${live} live resets`);
+
+    // Put the password back. Later blocks - the profile password-change tests
+    // in particular - assume the account still has the one it registered with,
+    // and a test that quietly changes shared state for everything downstream
+    // is worse than no test. The surviving reset row from above is right here,
+    // so reuse it rather than minting another.
+    const surviving = await resets.findOne({ usedAt: null });
+    const restoreToken = crypto.randomBytes(32).toString('hex');
+    await resets.updateOne({ _id: surviving._id }, { $set: { tokenHash: hash(restoreToken) } });
+
+    const restored = await json('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: restoreToken, newPassword: 'password123' }),
+    });
+    check('the original password is restored for the rest of the suite',
+      restored.res.status === 200, `got ${restored.res.status}`);
+
+    await conn.close();
+  }
+
   // ---- video upload + processing -------------------------------------
   console.log('\nvideo upload');
   let assetId;
@@ -357,7 +473,7 @@ async function pollUntilReady(id, token, tries = 40) {
   // The timeline is meaningless if every photo lands on its upload date, and
   // that is exactly what happened before EXIF was parsed properly.
   console.log('\ncapture dates');
-  let datedIds = [];
+  const datedIds = [];
   {
     const taken = new Date(2021, 4, 17, 14, 30, 0);   // 17 May 2021
     const stamped = withCaptureDate(fs.readFileSync(path.join(MEDIA, 'photo1.jpg')), taken);

@@ -29,8 +29,12 @@ async function discardUploads(req) {
  * Anything that reaches here without a recognised shape is a bug, so it is
  * logged in full and reported as a bare 500 - the message could contain a
  * file path or a connection string.
+ *
+ * `next` is declared but never called on purpose: Express identifies an error
+ * handler by its arity, and a three-argument function here would be treated as
+ * ordinary middleware and never see a thrown error at all. eslint.config.js
+ * exempts the name rather than carrying a disable comment.
  */
-// eslint-disable-next-line no-unused-vars -- Express needs the 4-arg signature
 module.exports = function errorHandler(err, req, res, next) {
   // Fire and forget: the response below must not wait on disk I/O, and a
   // failure to unlink is a log line, never a different status code.

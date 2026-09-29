@@ -46,6 +46,27 @@
           </button>
           <p class="form-msg is-err" id="auth-error" role="alert"></p>
         </form>
+
+        <!-- Hidden while registering: there is nothing to recover yet. -->
+        <p class="auth-alt" id="forgot-row">
+          <button class="link-btn" id="forgot-btn" type="button">Forgot your password?</button>
+        </p>
+
+        <form id="forgot-form" hidden>
+          <p class="panel-sub">
+            Enter your email and we will send a link to choose a new password.
+          </p>
+          <label class="field">
+            <span class="field-label">Email</span>
+            <input name="email" type="email" autocomplete="email"
+                   placeholder="you@example.com" required />
+          </label>
+          <button class="btn btn-primary btn-block" type="submit">
+            <span class="btn-label">Send reset link</span>
+          </button>
+          <button class="link-btn" id="forgot-cancel" type="button">Back to sign in</button>
+          <p class="form-msg" id="forgot-status" role="alert"></p>
+        </form>
       </div>
     </section>
 
@@ -352,7 +373,8 @@
     </div>
 
     <!-- ============ player ============ -->
-    <div class="overlay" id="player-overlay" hidden>
+    <div class="overlay" id="player-overlay" role="dialog" aria-modal="true"
+         aria-labelledby="player-title" hidden>
       <div class="modal modal-wide">
         <header class="modal-head">
           <h3 id="player-title"></h3>
@@ -392,7 +414,8 @@
     </div>
 
     <!-- ============ lightbox ============ -->
-    <div class="overlay" id="photo-overlay" hidden>
+    <div class="overlay" id="photo-overlay" role="dialog" aria-modal="true"
+         aria-labelledby="photo-title" hidden>
       <div class="modal modal-wide">
         <header class="modal-head">
           <h3 id="photo-title"></h3>
@@ -433,7 +456,7 @@
       </div>
     </div>
 
-    <div class="toast" id="toast" hidden></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
     <script src="/app.js"></script>
   </body>

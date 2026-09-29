@@ -326,12 +326,38 @@ svg { fill: currentColor; }
   cursor: pointer;
   transition: transform 0.16s, border-color 0.16s, box-shadow 0.16s;
 }
-.tile:hover:not(:disabled) {
+.tile { position: relative; }
+.tile:hover:not(.is-pending) {
   transform: translateY(-3px);
   border-color: var(--line-strong);
   box-shadow: var(--shadow);
 }
-.tile:disabled { cursor: default; opacity: 0.7; }
+.tile.is-pending { cursor: default; opacity: 0.7; }
+
+/*
+  The card-wide click target.
+
+  .tile used to be a <button>, which made the whole card clickable but put the
+  delete button inside a button - invalid, and dropped from the accessibility
+  tree, so it was mouse-only. Now a single real button carries the title, and
+  its ::after is stretched over the card to keep the large hit area. Actions
+  sit above it on z-index. One control in the a11y tree, full card clickable.
+*/
+.tile-open {
+  background: none; border: 0; padding: 0;
+  font: inherit; color: inherit; text-align: left;
+  cursor: pointer;
+  width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tile-open::after { content: ""; position: absolute; inset: 0; z-index: 1; }
+.tile-open:disabled { cursor: default; }
+.tile-open:focus-visible { outline: none; }
+/* Focus has to show on the card, not on the invisible stretched layer. */
+.tile:has(.tile-open:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .thumb {
   position: relative;
@@ -343,7 +369,7 @@ svg { fill: currentColor; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .thumb .placeholder { color: var(--faint); font-size: 12px; }
 
-.tile:hover .play-badge { opacity: 1; transform: scale(1); }
+.tile:hover:not(.is-pending) .play-badge { opacity: 1; transform: scale(1); }
 .play-badge {
   position: absolute; inset: 0; margin: auto;
   width: 46px; height: 46px;
@@ -439,7 +465,22 @@ svg { fill: currentColor; }
   transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1), box-shadow 0.18s;
 }
 .photo-cell:hover { transform: scale(1.035); z-index: 2; box-shadow: var(--shadow); }
-.photo-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
+
+/* The cell's click target, same stretched-::after pattern as .tile-open, and
+   for the same reason: the star and bin need to be real buttons. */
+.cell-open {
+  position: absolute; inset: 0;
+  z-index: 1;
+  background: none; border: 0; padding: 0;
+  cursor: pointer;
+}
+.cell-open:disabled { cursor: default; }
+.cell-open:focus-visible { outline: none; }
+.photo-cell:has(.cell-open:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  z-index: 2;
+}
 .photo-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .photo-cell .placeholder {
   display: grid; place-items: center; height: 100%;
@@ -450,6 +491,10 @@ svg { fill: currentColor; }
    grid should stay clean, but a starred photo has to read as starred. */
 .cell-star {
   position: absolute; top: 7px; right: 7px;
+  z-index: 2;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
   width: 28px; height: 28px;
   display: grid; place-items: center;
   border-radius: 50%;
@@ -462,6 +507,7 @@ svg { fill: currentColor; }
 }
 .photo-cell:hover .cell-star,
 .photo-cell:focus-within .cell-star,
+.cell-star:focus-visible,
 .cell-star.is-on { opacity: 1; transform: scale(1); }
 .cell-star svg { width: 15px; height: 15px; }
 .cell-star:hover { background: rgba(0, 0, 0, 0.75); }
@@ -775,12 +821,31 @@ svg { fill: currentColor; }
   .lightbox-stage { flex: 1; display: grid; place-items: center; }
 }
 
+/* ================= auth: forgot-password affordances ================= */
+
+.auth-alt {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.auth-alt a { color: #c3b9ff; text-decoration: underline; text-underline-offset: 3px; }
+.auth-alt a:hover { color: var(--text); }
+
+#forgot-form { display: flex; flex-direction: column; gap: 12px; }
+#forgot-form .panel-sub { margin: 0; }
+#forgot-form .link-btn { align-self: center; }
+
+
 /* ================= delete control on tiles and cells ================= */
 
 /* Mirrors .cell-star: hidden until hover so a grid of bins does not read as a
    warning, and sat on the opposite corner so the two never overlap. */
 .cell-trash {
   position: absolute; top: 7px; left: 7px;
+  z-index: 2;
+  border: 0;
+  padding: 0;
   width: 28px; height: 28px;
   display: grid; place-items: center;
   border-radius: 50%;
@@ -795,7 +860,13 @@ svg { fill: currentColor; }
 .photo-cell:hover .cell-trash,
 .photo-cell:focus-within .cell-trash,
 .tile:hover .cell-trash,
-.tile:focus-within .cell-trash { opacity: 1; transform: scale(1); }
+.tile:focus-within .cell-trash,
+.cell-trash:focus-visible { opacity: 1; transform: scale(1); }
+
+/* A control that only appears on hover is unreachable by keyboard unless it
+   also appears on focus - and invisible focus is worse than no focus. */
+.cell-trash:focus-visible,
+.cell-star:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cell-trash svg { width: 14px; height: 14px; }
 .cell-trash:hover { background: rgba(0, 0, 0, 0.8); color: var(--err); }
 

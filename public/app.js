@@ -127,6 +127,74 @@ const posterSrc = (asset) => (asset.posterUrl ? withToken(asset.posterUrl) : '')
  * Formatting
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * Modal focus management
+ * ------------------------------------------------------------------ */
+
+// Where focus was before a modal opened, so it can be handed back on close.
+// Without this, dismissing the player drops a keyboard user at the top of the
+// document instead of on the tile they came from.
+let focusBeforeModal = null;
+
+const FOCUSABLE = [
+  'a[href]', 'button:not([disabled])', 'input:not([disabled])',
+  'textarea:not([disabled])', 'select:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const visibleFocusable = (root) =>
+  [...root.querySelectorAll(FOCUSABLE)].filter(
+    (el) => !el.hidden && el.offsetParent !== null && !el.closest('[hidden]')
+  );
+
+/**
+ * Keep Tab inside the open dialog.
+ *
+ * `aria-modal` tells a screen reader to ignore the rest of the page, but it
+ * does nothing about the Tab key - without this, tabbing out of the player
+ * walks the sidebar and the tiles behind it while the overlay still covers
+ * them, which is a worse experience than no dialog at all.
+ */
+function trapFocus(overlay, e) {
+  if (e.key !== 'Tab') return;
+
+  const items = visibleFocusable(overlay);
+  if (items.length === 0) return;
+
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+
+  if (e.shiftKey && (active === first || !overlay.contains(active))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function openModal(overlay) {
+  focusBeforeModal = document.activeElement;
+  overlay.hidden = false;
+
+  // Focus the close button rather than the first control: it is the one thing
+  // every dialog has, and it tells a screen reader user immediately how to get
+  // back out.
+  const close = overlay.querySelector('.icon-btn');
+  if (close) close.focus();
+}
+
+function closeModal(overlay) {
+  overlay.hidden = true;
+
+  // Only restore if the element is still in the document - deleting an asset
+  // removes the tile that was focused.
+  if (focusBeforeModal && document.contains(focusBeforeModal)) {
+    focusBeforeModal.focus();
+  }
+  focusBeforeModal = null;
+}
+
 function toast(message) {
   const el = $('#toast');
   el.textContent = message;
@@ -208,6 +276,47 @@ $('#auth-form').addEventListener('submit', async (e) => {
     await enterApp(data.user);
   } catch (err) {
     $('#auth-error').textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ---- forgot password ---- */
+
+function showForgot(on) {
+  $('#forgot-form').hidden = !on;
+  $('#auth-form').hidden = on;
+  $('#auth-tabs').hidden = on;
+  $('#forgot-row').hidden = on;
+  $('#auth-error').textContent = '';
+  $('#forgot-status').textContent = '';
+  if (on) $('#forgot-form').email.value = $('#auth-form').email.value.trim();
+}
+
+$('#forgot-btn').addEventListener('click', () => showForgot(true));
+$('#forgot-cancel').addEventListener('click', () => showForgot(false));
+
+$('#forgot-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const btn = form.querySelector('button[type="submit"]');
+  const status = $('#forgot-status');
+
+  btn.disabled = true;
+  status.className = 'form-msg';
+  status.textContent = 'Sending…';
+  try {
+    const data = await api('/api/auth/forgot-password', {
+      method: 'POST',
+      body: { email: form.email.value.trim() },
+    });
+    status.classList.add('is-ok');
+    // The API says the same thing whether or not the account exists, and so
+    // does this - echoing it rather than writing our own keeps the two honest.
+    status.textContent = data.message;
+  } catch (err) {
+    status.classList.add('is-err');
+    status.textContent = err.message;
   } finally {
     btn.disabled = false;
   }
@@ -323,15 +432,22 @@ async function deleteAsset(asset, onDone) {
 /**
  * The little bin that appears on a tile you own.
  *
- * A <span>, not a <button>, because tiles and photo cells are themselves
- * buttons and nesting one inside another is invalid HTML - the same reason
- * .cell-star is built this way. stopPropagation keeps the click off the tile,
- * which would otherwise open the player behind the confirm.
+ * A real <button>. It used to be a <span>, because the tile itself was a
+ * <button> and nesting one inside another is invalid - but that also meant the
+ * only way to delete from the grid was with a mouse. Tiles and photo cells are
+ * <div>s now, with the card-wide click supplied by a stretched ::after on the
+ * primary button, so the actions can be buttons too.
+ *
+ * stopPropagation keeps the click off the card underneath.
  */
 function trashControl(asset, onDone) {
-  const trash = document.createElement('span');
+  const noun = asset.kind === 'photo' ? 'photo' : 'video';
+  const trash = document.createElement('button');
+  trash.type = 'button';
   trash.className = 'cell-trash';
-  trash.title = `Delete this ${asset.kind === 'photo' ? 'photo' : 'video'}`;
+  trash.title = `Delete this ${noun}`;
+  // The title attribute is a tooltip, not a name a screen reader can rely on.
+  trash.setAttribute('aria-label', `Delete ${asset.title}`);
   trash.innerHTML = TRASH_SVG;
   trash.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -347,13 +463,17 @@ function trashControl(asset, onDone) {
  * point, in your own library it would just repeat your own name on every row.
  */
 function videoTile(asset, progressPercent, { showOwner = false } = {}) {
-  const tile = document.createElement('button');
+  // A <div>, not a <button>. The card carries its own actions (delete), and a
+  // button inside a button is invalid HTML that browsers resolve by dropping
+  // the inner one from the accessibility tree - which is why those actions
+  // used to be mouse-only. The whole-card click comes from a stretched
+  // ::after on .tile-open instead; see styles.css.
+  const tile = document.createElement('div');
   tile.className = 'tile';
-  tile.type = 'button';
 
   const ready = asset.status === 'ready';
   // A file still being probed has no poster and no playable bytes yet.
-  if (!ready) tile.disabled = true;
+  if (!ready) tile.classList.add('is-pending');
 
   const badge = ready
     ? ''
@@ -381,16 +501,27 @@ function videoTile(asset, progressPercent, { showOwner = false } = {}) {
   tile.innerHTML = `
     <div class="thumb">${poster}${play}${badge || shareFlag}${duration}${bar}</div>
     <div class="tile-body">
-      <div class="tile-title"></div>
+      <div class="tile-title"><button class="tile-open" type="button"></button></div>
       ${showOwner ? '<div class="tile-owner"></div>' : ''}
       <div class="tile-sub"></div>
     </div>`;
+
   // Titles and display names are user-supplied - assign as text, never HTML.
-  tile.querySelector('.tile-title').textContent = asset.title;
+  const open = tile.querySelector('.tile-open');
+  open.textContent = asset.title;
   tile.querySelector('.tile-sub').textContent = sub;
   if (showOwner) {
     tile.querySelector('.tile-owner').textContent =
       asset.isOwner ? 'You' : asset.ownerName || 'Unknown member';
+  }
+
+  if (!ready) {
+    open.disabled = true;
+    // Otherwise the only cue that this tile is inert is a slight fade.
+    open.setAttribute('aria-label',
+      `${asset.title} — ${asset.status === 'failed' ? 'processing failed' : 'still processing'}`);
+  } else {
+    open.setAttribute('aria-label', `Play ${asset.title}`);
   }
 
   // Deleting used to require opening the player first, which is a lot of
@@ -401,7 +532,7 @@ function videoTile(asset, progressPercent, { showOwner = false } = {}) {
     );
   }
 
-  if (ready) tile.addEventListener('click', () => openPlayer(asset));
+  if (ready) open.addEventListener('click', () => openPlayer(asset));
   return tile;
 }
 
@@ -729,7 +860,7 @@ async function openPlayer(asset) {
 
   // Show the overlay straight away so the click feels immediate; the source is
   // attached below, once we know where to start from.
-  $('#player-overlay').hidden = false;
+  openModal($('#player-overlay'));
 
   // One bump per open, not per range request - see the route comment.
   api(`/api/assets/${asset.id}/view`, { method: 'POST' }).catch(() => {});
@@ -786,7 +917,7 @@ function closePlayer() {
   video.pause();
   video.removeAttribute('src');
   video.load();
-  $('#player-overlay').hidden = true;
+  closeModal($('#player-overlay'));
 }
 
 function sendProgress(keepalive = false) {
@@ -932,9 +1063,10 @@ function justify(photos, containerWidth) {
 const HEART_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.3 4.3 12.9a4.7 4.7 0 0 1 6.6-6.7l1.1 1 1.1-1a4.7 4.7 0 1 1 6.6 6.7z"/></svg>';
 
 function photoCell(photo, index, height) {
-  const cell = document.createElement('button');
+  // Same reasoning as videoTile: a <div> so the star and bin can be real
+  // buttons rather than mouse-only spans.
+  const cell = document.createElement('div');
   cell.className = 'photo-cell';
-  cell.type = 'button';
   cell.style.height = `${height}px`;
   cell.style.width = `${height * aspectOf(photo)}px`;
 
@@ -942,10 +1074,23 @@ function photoCell(photo, index, height) {
     ? `<img src="${posterSrc(photo)}" alt="" loading="lazy" />`
     : `<span class="placeholder">${photo.status === 'failed' ? 'Failed' : '…'}</span>`;
 
-  const star = document.createElement('span');
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'cell-open';
+  // The <img> is alt="" because the cell's own label describes it; giving both
+  // a name would announce the photo twice.
+  open.setAttribute('aria-label', `Open ${photo.title}`);
+  if (photo.status !== 'ready') open.disabled = true;
+  cell.appendChild(open);
+
+  const star = document.createElement('button');
+  star.type = 'button';
   star.className = `cell-star${photo.favorite ? ' is-on' : ''}`;
   star.innerHTML = HEART_SVG;
   star.title = photo.favorite ? 'Remove from favourites' : 'Add to favourites';
+  star.setAttribute('aria-label',
+    `${photo.favorite ? 'Remove' : 'Add'} ${photo.title} ${photo.favorite ? 'from' : 'to'} favourites`);
+  star.setAttribute('aria-pressed', String(Boolean(photo.favorite)));
   // A click on the heart must not also open the lightbox.
   star.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -957,7 +1102,7 @@ function photoCell(photo, index, height) {
     cell.appendChild(trashControl(photo, () => { loadPhotos(); loadProfile(); }));
   }
 
-  if (photo.status === 'ready') cell.addEventListener('click', () => showPhoto(index));
+  if (photo.status === 'ready') open.addEventListener('click', () => showPhoto(index));
   return cell;
 }
 
@@ -1300,11 +1445,15 @@ function showPhoto(index) {
 
   $('#photo-prev').hidden = index === 0;
   $('#photo-next').hidden = index === flatPhotos.length - 1;
-  $('#photo-overlay').hidden = false;
+
+  // Arrowing between photos keeps the lightbox open, so only take focus on the
+  // first open - stealing it on every step would fight the arrow keys.
+  const overlay = $('#photo-overlay');
+  if (overlay.hidden) openModal(overlay);
 }
 
 function closeLightbox() {
-  $('#photo-overlay').hidden = true;
+  closeModal($('#photo-overlay'));
   $('#capture-form').hidden = true;
   $('#photo-full').removeAttribute('src');
   photoIndex = -1;
@@ -1339,11 +1488,17 @@ const isTyping = (target) =>
   (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
 document.addEventListener('keydown', (e) => {
-  if (!$('#player-overlay').hidden) {
+  const player = $('#player-overlay');
+  const lightbox = $('#photo-overlay');
+
+  if (!player.hidden) {
+    trapFocus(player, e);
     if (e.key === 'Escape') $('#player-close').click();
     return;
   }
-  if ($('#photo-overlay').hidden) return;
+  if (lightbox.hidden) return;
+
+  trapFocus(lightbox, e);
   if (e.key === 'Escape') return closeLightbox();
   if (isTyping(e.target)) return;
   if (e.key === 'ArrowLeft') showPhoto(photoIndex - 1);

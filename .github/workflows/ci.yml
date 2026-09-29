@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A real MongoDB rather than mongodb-memory-server. The suite already needs
+    # a database; a service container gives it one without adding a ~100 MB
+    # mongod download to every developer's first `npm test`.
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `npm ci` rather than `npm install`: it installs exactly what the
+      # lockfile says, so CI cannot pass against dependency versions that the
+      # committed lockfile would never produce.
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+        env:
+          # run-tests.js creates its own throwaway database on this host and
+          # drops it afterwards, so nothing else needs configuring.
+          TEST_MONGO_HOST: mongodb://127.0.0.1:27017

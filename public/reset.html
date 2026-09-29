@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Choose a new password · FlixDrive</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!--
+      Standalone like share.html: whoever follows a reset link is by definition
+      unable to sign in, so the SPA's auth gate is the wrong destination.
+    -->
+    <section class="auth-screen">
+      <div class="auth-art" aria-hidden="true">
+        <span class="orb orb-a"></span>
+        <span class="orb orb-b"></span>
+      </div>
+
+      <div class="auth-card">
+        <div class="logo logo-lg">
+          <span class="logo-mark">FD</span>
+          <span class="logo-text">FlixDrive</span>
+        </div>
+        <p class="auth-sub">Choose a new password.</p>
+
+        <form id="reset-form" autocomplete="on" novalidate>
+          <label class="field">
+            <span class="field-label">New password</span>
+            <input name="newPassword" type="password" autocomplete="new-password"
+                   placeholder="At least 8 characters" required minlength="8" />
+          </label>
+          <label class="field">
+            <span class="field-label">Confirm new password</span>
+            <input name="confirmPassword" type="password" autocomplete="new-password"
+                   placeholder="Type it again" required minlength="8" />
+          </label>
+
+          <button class="btn btn-primary btn-block btn-lg" type="submit">
+            <span class="btn-label">Set new password</span>
+          </button>
+          <p class="form-msg" id="reset-status" role="alert"></p>
+        </form>
+
+        <p class="auth-alt"><a href="/">Back to sign in</a></p>
+      </div>
+    </section>
+
+    <script src="/reset.js"></script>
+  </body>
+</html>

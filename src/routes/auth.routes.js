@@ -1,7 +1,9 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
+const PasswordReset = require('../models/PasswordReset');
 const { signToken, signMediaToken, requireAuth } = require('../middleware/auth');
+const { send, renderResetEmail } = require('../services/mailer');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
@@ -96,5 +98,94 @@ router.get('/media-token', requireAuth(), (req, res) => {
     expiresIn: process.env.MEDIA_TOKEN_TTL || '2h',
   });
 });
+
+/**
+ * Asking for a reset is its own rate-limit bucket. Without one this is both a
+ * mail-bomb relay and an account-enumeration oracle driven by timing.
+ */
+const resetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.RATE_LIMIT_RESET || 10),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many reset requests. Try again later.' },
+});
+
+/**
+ * POST /api/auth/forgot-password
+ *
+ * Always answers the same way, whether or not the email is registered. Saying
+ * "no such account" here would undo the care taken in the login route, which
+ * deliberately returns one message for both failure modes.
+ */
+router.post(
+  '/forgot-password',
+  resetLimiter,
+  asyncHandler(async (req, res) => {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    const sameAnswer = {
+      ok: true,
+      message: 'If that email has an account, a reset link is on its way.',
+    };
+
+    if (!email) return res.status(400).json({ error: 'email is required' });
+
+    const user = await User.findOne({ email });
+    if (!user) return res.json(sameAnswer);
+
+    const { token, expiresInMinutes } = await PasswordReset.issue(user._id);
+
+    const base = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+    const resetUrl = `${base}/reset.html?token=${token}`;
+
+    await send(renderResetEmail({ to: user.email, resetUrl, expiresInMinutes }));
+
+    res.json(sameAnswer);
+  })
+);
+
+/**
+ * POST /api/auth/reset-password
+ *
+ * Consumes the token and sets the new password. Does NOT sign the user in:
+ * completing a reset proves control of the mailbox, and dropping them at the
+ * login screen to use the password they just chose is both a confirmation that
+ * it worked and one less way to end up with a session nobody meant to create.
+ */
+router.post(
+  '/reset-password',
+  resetLimiter,
+  asyncHandler(async (req, res) => {
+    const { token, newPassword } = req.body || {};
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'token and newPassword are required' });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    const reset = await PasswordReset.consume(token);
+    // One message for expired, already-used, and never-existed. The difference
+    // is not useful to a legitimate user and is useful to everyone else.
+    if (!reset) {
+      return res.status(400).json({ error: 'That reset link is invalid or has expired' });
+    }
+
+    const user = await User.findById(reset.userId);
+    if (!user) return res.status(400).json({ error: 'That reset link is invalid or has expired' });
+
+    user.password = newPassword;
+    await user.save();
+
+    // Burn the token before answering, so a replayed request cannot land in
+    // the window between the save and the update.
+    reset.usedAt = new Date();
+    await reset.save();
+
+    res.json({ ok: true });
+  })
+);
 
 module.exports = router;
