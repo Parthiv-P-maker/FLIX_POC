@@ -11,7 +11,9 @@ const UPLOAD_DIR = path.join(STORAGE_ROOT, 'uploads');
 const PHOTO_DIR = path.join(STORAGE_ROOT, 'photos');
 
 // Video posters and photo thumbnails share a folder because they are the same
-// thing to a client: a small image served statically without auth.
+// thing to a client: one small derived image per asset. They are served by
+// routes/posters.routes.js under the same access rules as the original - a
+// photo thumbnail is 640px wide, which for a private photo is the photo.
 const POSTER_DIR = path.join(STORAGE_ROOT, 'posters');
 
 const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');

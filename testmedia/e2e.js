@@ -129,8 +129,22 @@ async function pollUntilReady(id, token, tries = 40) {
   check('poster was generated', !!(asset && asset.posterUrl));
 
   if (asset && asset.posterUrl) {
-    const res = await fetch(asset.posterUrl);
-    check('poster is served statically', res.status === 200 && res.headers.get('content-type').startsWith('image/'));
+    const res = await fetch(`${asset.posterUrl}?token=${token}`);
+    check('poster served through the auth route',
+      res.status === 200 && res.headers.get('content-type').startsWith('image/'));
+    check('poster is not publicly cacheable',
+      (res.headers.get('cache-control') || '').includes('private'),
+      res.headers.get('cache-control'));
+    await res.arrayBuffer();
+
+    // Regression guard for SEC-01. Posters were once served by express.static
+    // off a directory named by asset id, so anyone could walk a private
+    // library by incrementing the last hex digit of a URL they had seen.
+    const anon = await fetch(asset.posterUrl);
+    check('poster refuses an unauthenticated request', anon.status === 401, `got ${anon.status}`);
+
+    const legacy = await fetch(`${BASE}/static/posters/${assetId}.png`);
+    check('the old /static/posters mount is gone', legacy.status === 404, `got ${legacy.status}`);
   }
 
   // ---- range streaming (the critical one) -----------------------------
@@ -159,6 +173,14 @@ async function pollUntilReady(id, token, tries = 40) {
       headers: { Range: 'bytes=99999999-' },
     });
     check('out-of-range start returns 416', res.status === 416, `got ${res.status}`);
+  }
+  {
+    // Unsatisfiable per RFC 7233. This used to be clamped into "start to EOF",
+    // which answers a question the client never asked.
+    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${token}`, {
+      headers: { Range: 'bytes=500-100' },
+    });
+    check('inverted range returns 416', res.status === 416, `got ${res.status}`);
   }
   {
     const res = await fetch(`${BASE}/api/stream/${assetId}`);
@@ -237,8 +259,14 @@ async function pollUntilReady(id, token, tries = 40) {
     photos.every((p) => p && p.originalUrl && !p.streamUrl));
 
   if (photos[0]) {
-    const res = await fetch(photos[0].posterUrl);
-    check('thumbnail served statically', res.status === 200);
+    const res = await fetch(`${photos[0].posterUrl}?token=${token}`);
+    check('thumbnail served through the auth route', res.status === 200);
+    await res.arrayBuffer();
+
+    // A photo thumbnail is 640px wide - for a private photo that is the photo,
+    // so it has to be at least as protected as the original.
+    const anon = await fetch(photos[0].posterUrl);
+    check('thumbnail refuses an unauthenticated request', anon.status === 401, `got ${anon.status}`);
     const full = await fetch(`${photos[0].originalUrl}?token=${token}`);
     check('full photo served through auth route', full.status === 200,
       full.headers.get('content-type'));
@@ -430,6 +458,10 @@ async function pollUntilReady(id, token, tries = 40) {
     const stream = await fetch(`${BASE}/api/stream/${assetId}?token=${other.token}`);
     check("another user cannot stream it", stream.status === 403, `got ${stream.status}`);
 
+    // The poster is derived from a private original, so it inherits its rules.
+    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${other.token}`);
+    check("another user cannot fetch its poster", poster.status === 403, `got ${poster.status}`);
+
     const { body: lib } = await json('/api/assets', { headers: otherAuth });
     check('new user sees an empty library', lib.assets.length === 0);
   }
@@ -475,6 +507,13 @@ async function pollUntilReady(id, token, tries = 40) {
     });
     check('another user can range-stream it', stream.status === 206, `got ${stream.status}`);
     await stream.arrayBuffer();
+
+    // Browse renders other people's posters, so authorising them must not have
+    // broken the shared case - it is the reason the check is visibility-based
+    // rather than owner-only.
+    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${otherToken}`);
+    check('another user can fetch a shared poster', poster.status === 200, `got ${poster.status}`);
+    await poster.arrayBuffer();
   }
   {
     // Sharing grants read, never write. Both of these are the same 404 a

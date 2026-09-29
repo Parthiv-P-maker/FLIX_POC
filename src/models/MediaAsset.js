@@ -114,7 +114,10 @@ mediaAssetSchema.methods.toPublic = function (req) {
     viewCount: this.viewCount || 0,
     favorite: Boolean(this.favorite),
     processingError: this.processingError,
-    posterUrl: this.posterKey ? `${base}/static/posters/${this.posterKey}` : null,
+    // Keyed by asset id, not by posterKey: the route resolves the filename
+    // itself after checking who is asking, so the storage layout stays private.
+    // Needs a ?token= like the stream URL - an <img src> cannot send headers.
+    posterUrl: this.posterKey ? `${base}/api/posters/${this._id}` : null,
     createdAt: this.createdAt,
   };
 

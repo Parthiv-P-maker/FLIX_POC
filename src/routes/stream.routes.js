@@ -1,8 +1,8 @@
 const express = require('express');
 const fs = require('fs');
 const fsp = require('fs/promises');
-const MediaAsset = require('../models/MediaAsset');
 const { requireAuth } = require('../middleware/auth');
+const { loadViewableAsset } = require('../middleware/assetAccess');
 const asyncHandler = require('../utils/asyncHandler');
 const { sourcePathFor } = require('../config/paths');
 
@@ -12,6 +12,28 @@ const router = express.Router();
 // ("bytes=0-"). Serving the entire file in one response would work but
 // would defeat the point: the browser could not cheaply seek.
 const CHUNK_SIZE = 1 * 1024 * 1024;
+
+/**
+ * Pipe a read stream to the response with the teardown both branches need.
+ *
+ * The browser aborts in-flight requests constantly while seeking, and a read
+ * can fail at any point. Without the 'error' handler an I/O failure is an
+ * unhandled 'error' event, which in Node is an uncaught exception that takes
+ * the whole process down - so this has to wrap every send, not just the
+ * partial-content one.
+ */
+function pipeFile(filePath, res, req, options = {}) {
+  const stream = fs.createReadStream(filePath, options);
+
+  stream.on('error', () => {
+    if (res.headersSent) return res.destroy();
+    res.status(500).json({ error: 'Failed to read the underlying file' });
+  });
+  // Without this the file descriptor leaks on every scrub.
+  req.on('close', () => stream.destroy());
+
+  stream.pipe(res);
+}
 
 /**
  * GET /api/stream/:id
@@ -27,16 +49,9 @@ router.get(
   '/:id',
   requireAuth({ allowQuery: true }),
   asyncHandler(async (req, res) => {
-    const asset = await MediaAsset.findById(req.params.id);
-    if (!asset) return res.status(404).json({ error: 'Asset not found' });
-
-    const isOwner = String(asset.ownerId) === String(req.user._id);
-    if (!isOwner && asset.visibility === 'private') {
-      return res.status(403).json({ error: 'You do not have access to this asset' });
-    }
-    if (asset.status !== 'ready') {
-      return res.status(409).json({ error: `Asset is not playable yet (status: ${asset.status})` });
-    }
+    // Ownership, visibility and readiness all live in one place now, shared
+    // with the poster route so the two cannot drift apart.
+    const asset = await loadViewableAsset(req);
 
     // Videos and photos live in different folders; the model knows which.
     const filePath = sourcePathFor(asset);
@@ -66,7 +81,7 @@ router.get(
         'Accept-Ranges': 'bytes',
         'Cache-Control': cacheControl,
       });
-      return fs.createReadStream(filePath).pipe(res);
+      return pipeFile(filePath, res, req);
     }
 
     // Range looks like "bytes=1048576-" or "bytes=1048576-2097151".
@@ -84,7 +99,12 @@ router.get(
       return res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
     }
     end = Math.min(end, fileSize - 1);
-    if (end < start) end = fileSize - 1;
+    // "bytes=500-100" is unsatisfiable per RFC 7233. Serving from `start` to
+    // EOF instead - which is what clamping used to do - answers a question the
+    // client did not ask.
+    if (end < start) {
+      return res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+    }
 
     const contentLength = end - start + 1;
 
@@ -96,14 +116,7 @@ router.get(
       'Cache-Control': 'private, max-age=0, no-cache',
     });
 
-    const stream = fs.createReadStream(filePath, { start, end });
-
-    // The browser aborts in-flight range requests constantly while seeking.
-    // Without this the file descriptor leaks on every scrub.
-    stream.on('error', () => res.destroy());
-    req.on('close', () => stream.destroy());
-
-    stream.pipe(res);
+    pipeFile(filePath, res, req, { start, end });
   })
 );
 

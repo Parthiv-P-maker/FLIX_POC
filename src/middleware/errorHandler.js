@@ -1,4 +1,27 @@
+const fs = require('fs/promises');
 const multer = require('multer');
+
+/**
+ * Multer writes uploads to disk *before* the route handler runs, so any
+ * failure after that point - a validation error, a dropped database
+ * connection, or multer's own file-count limit tripping on the 21st file -
+ * leaves bytes in storage/ with no row pointing at them and nothing to ever
+ * clean them up.
+ *
+ * Doing this here rather than in each route covers both cases at once: an
+ * error thrown by the handler and an error thrown by the upload middleware
+ * itself. On success this function never runs, so the files are kept.
+ */
+async function discardUploads(req) {
+  const files = [...(req.files || []), ...(req.file ? [req.file] : [])];
+  if (files.length === 0) return;
+
+  const results = await Promise.allSettled(files.map((f) => fs.unlink(f.path)));
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  if (failed > 0) {
+    console.error(`[cleanup] could not remove ${failed} orphaned upload(s) after a failed request`);
+  }
+}
 
 /**
  * The single place a thrown error becomes an HTTP response.
@@ -9,6 +32,10 @@ const multer = require('multer');
  */
 // eslint-disable-next-line no-unused-vars -- Express needs the 4-arg signature
 module.exports = function errorHandler(err, req, res, next) {
+  // Fire and forget: the response below must not wait on disk I/O, and a
+  // failure to unlink is a log line, never a different status code.
+  discardUploads(req).catch(() => {});
+
   if (res.headersSent) {
     // Common when a range stream dies mid-flight: the status line is already
     // out, so the only correct move is to drop the socket.

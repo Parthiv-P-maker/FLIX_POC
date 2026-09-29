@@ -38,8 +38,12 @@ async function api(path, { method = 'GET', body, isForm = false } = {}) {
 }
 
 // <video src> and <img src> cannot carry an Authorization header, so the
-// stream route takes the token in the query string instead.
+// stream and poster routes take the token in the query string instead.
 const withToken = (url) => `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+
+// Posters are authorised now, not static, so every <img src> needs the token.
+// Null-safe because an asset still being processed has no poster yet.
+const posterSrc = (asset) => (asset.posterUrl ? withToken(asset.posterUrl) : '');
 
 /* ------------------------------------------------------------------ *
  * Formatting
@@ -226,7 +230,7 @@ function videoTile(asset, progressPercent, { showOwner = false } = {}) {
     ? `<span class="badge badge-share">${GLOBE_SVG}Shared</span>`
     : '';
   const poster = asset.posterUrl
-    ? `<img src="${asset.posterUrl}" alt="" loading="lazy" />`
+    ? `<img src="${posterSrc(asset)}" alt="" loading="lazy" />`
     : '<span class="placeholder">No preview</span>';
   const duration = asset.durationSec
     ? `<span class="duration">${formatDuration(asset.durationSec)}</span>`
@@ -266,7 +270,7 @@ function paintHero(assets, percentById) {
   if (!featured) { hero.hidden = true; return; }
 
   const percent = percentById.get(String(featured.id));
-  $('#hero-poster').src = featured.posterUrl || '';
+  $('#hero-poster').src = posterSrc(featured);
   $('#hero-title').textContent = featured.title;
   $('#hero-meta').textContent = [
     formatDuration(featured.durationSec),
@@ -391,6 +395,13 @@ const video = $('#player');
 let playingAsset = null;
 let lastSentAt = 0;
 
+// Opening a video is asynchronous - it waits on the resume point before it can
+// start. These two make that interruptible: `playerSession` identifies the
+// current open so a superseded one can bail, and the controller detaches any
+// listener that open attached to the shared <video> element.
+let playerSession = 0;
+let playerAbort = null;
+
 /** Reflects share state on the player's toggle. Owner-only; hidden otherwise. */
 function paintShareButton(asset) {
   const btn = $('#player-share');
@@ -403,6 +414,15 @@ function paintShareButton(asset) {
 }
 
 async function openPlayer(asset) {
+  // Every open supersedes the one before it. There is a single <video>
+  // element, so without this an open that is still fetching its resume point
+  // can come back after the user has clicked a different video and seek *that*
+  // one to the first video's position.
+  const session = ++playerSession;
+  if (playerAbort) playerAbort.abort();
+  playerAbort = new AbortController();
+  const { signal } = playerAbort;
+
   playingAsset = asset;
   lastSentAt = 0;
 
@@ -417,7 +437,8 @@ async function openPlayer(asset) {
 
   paintShareButton(asset);
 
-  video.src = withToken(asset.streamUrl);
+  // Show the overlay straight away so the click feels immediate; the source is
+  // attached below, once we know where to start from.
   $('#player-overlay').hidden = false;
 
   // One bump per open, not per range request - see the route comment.
@@ -431,14 +452,34 @@ async function openPlayer(asset) {
     if (!p.completed && p.positionSec > 5) resumeAt = p.positionSec;
   } catch { /* a missing progress row is not an error */ }
 
-  video.addEventListener('loadedmetadata', function once() {
-    video.removeEventListener('loadedmetadata', once);
-    if (resumeAt > 0 && resumeAt < video.duration - 10) video.currentTime = resumeAt;
-    video.play().catch(() => {});
-  });
+  // The user closed this, or opened something else, while we were waiting.
+  if (session !== playerSession) return;
+
+  // Both of these must happen after the await and in this order. The element
+  // preloads metadata, so assigning src first - as this used to - lets
+  // loadedmetadata fire while the progress request is still in flight, and a
+  // listener attached afterwards never runs: no resume, and no autoplay.
+  video.addEventListener(
+    'loadedmetadata',
+    () => {
+      if (resumeAt > 0 && resumeAt < video.duration - 10) video.currentTime = resumeAt;
+      video.play().catch(() => {});
+    },
+    { once: true, signal }
+  );
+
+  video.src = withToken(asset.streamUrl);
 }
 
 function closePlayer() {
+  // Invalidate any open still waiting on its resume point, and drop the
+  // loadedmetadata listener so it cannot fire against the next video.
+  playerSession += 1;
+  if (playerAbort) {
+    playerAbort.abort();
+    playerAbort = null;
+  }
+
   if (playingAsset && video.currentTime > 0) sendProgress(true);
   video.pause();
   video.removeAttribute('src');
@@ -596,7 +637,7 @@ function photoCell(photo, index, height) {
   cell.style.width = `${height * aspectOf(photo)}px`;
 
   cell.innerHTML = photo.posterUrl
-    ? `<img src="${photo.posterUrl}" alt="" loading="lazy" />`
+    ? `<img src="${posterSrc(photo)}" alt="" loading="lazy" />`
     : `<span class="placeholder">${photo.status === 'failed' ? 'Failed' : '…'}</span>`;
 
   const star = document.createElement('span');

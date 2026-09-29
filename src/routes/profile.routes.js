@@ -41,7 +41,10 @@ async function buildStats(userId) {
     ]),
     // How much of your library is in the public catalog, and how much of it
     // you have starred. Both are cheap counts against existing indexes.
-    MediaAsset.countDocuments({ ownerId: userId, kind: 'video', visibility: { $ne: 'private' } }),
+    // Matches catalog.routes' CATALOG_FILTER exactly - this number is supposed
+    // to be "how many of my videos are in Browse", so it has to ask the same
+    // question, including excluding a future 'unlisted'.
+    MediaAsset.countDocuments({ ownerId: userId, kind: 'video', visibility: 'public' }),
     MediaAsset.countDocuments({ ownerId: userId, kind: 'photo', favorite: true }),
   ]);
 

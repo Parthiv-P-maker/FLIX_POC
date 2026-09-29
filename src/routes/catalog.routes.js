@@ -6,12 +6,18 @@ const asyncHandler = require('../utils/asyncHandler');
 const router = express.Router();
 router.use(requireAuth());
 
-// Everything the catalog can ever return. Private rows are excluded here
-// once, so no individual handler can forget the check.
+// Everything the catalog can ever return, declared once so no individual
+// handler can forget the check.
+//
+// Deliberately `visibility: 'public'` and not `{ $ne: 'private' }`. The enum
+// also carries 'unlisted', reserved for a share-by-link feature - and an
+// exclusion filter would have published the very first unlisted asset into
+// this grid, which is the opposite of what unlisted means. Naming the allowed
+// value means a new visibility is invisible here until someone opts it in.
 const CATALOG_FILTER = {
   kind: 'video',
   status: 'ready',
-  visibility: { $ne: 'private' },
+  visibility: 'public',
 };
 
 // A user typing "a.*" into search should get titles containing "a.*", not a

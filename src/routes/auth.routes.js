@@ -1,12 +1,40 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const { signToken, requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
 
+/**
+ * An 8-character minimum is not a defence on its own - without a limit here,
+ * login is an unbounded guessing oracle. The window is per IP.
+ *
+ * The numbers are deliberately loose enough that a human who forgets their
+ * password twice is never locked out, and that the e2e suite can run several
+ * times in a row, while still being far too tight to brute-force through.
+ * Both are env-tunable so a demo can relax them without editing code.
+ */
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.RATE_LIMIT_LOGIN || 20),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many sign-in attempts. Try again in a few minutes.' },
+});
+
+// Slower still: registration is how the database gets filled by a script.
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.RATE_LIMIT_REGISTER || 15),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many accounts created from here. Try again later.' },
+});
+
 router.post(
   '/register',
+  registerLimiter,
   asyncHandler(async (req, res) => {
     const { email, password, displayName } = req.body || {};
 
@@ -30,6 +58,7 @@ router.post(
 
 router.post(
   '/login',
+  loginLimiter,
   asyncHandler(async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) {

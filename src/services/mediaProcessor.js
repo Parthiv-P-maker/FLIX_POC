@@ -203,4 +203,28 @@ function enqueue(assetId) {
   return chain;
 }
 
-module.exports = { enqueue, processAsset, getQueueDepth: () => queuedCount };
+/**
+ * Recover work the last shutdown interrupted.
+ *
+ * `chain` is a module variable, so a crash, a Ctrl-C or a nodemon reload takes
+ * the queue with it and leaves those rows at 'processing' forever - the client
+ * polls an asset that no worker will ever touch again. Nothing about the job is
+ * lost though: the original is on disk and processAsset is idempotent, so the
+ * fix is simply to enqueue them again at boot.
+ *
+ * 'uploading' is swept too. No route sets it today - the schema default is the
+ * only way to reach it - but if one ever did, a stuck row there is the same
+ * kind of orphan. An asset whose file has since vanished lands in the normal
+ * failure path and ends up 'failed' with a readable reason, which is the right
+ * answer for it.
+ */
+async function requeueInterrupted() {
+  const stranded = await MediaAsset.find({
+    status: { $in: ['processing', 'uploading'] },
+  }).select('_id');
+
+  stranded.forEach((asset) => enqueue(asset._id));
+  return stranded.length;
+}
+
+module.exports = { enqueue, processAsset, requeueInterrupted, getQueueDepth: () => queuedCount };
