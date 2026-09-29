@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 
 // Status is a state machine: uploading -> processing -> ready | failed
@@ -51,6 +52,13 @@ const mediaAssetSchema = new mongoose.Schema(
     // uploaded last month but shared today is new *to the catalog*.
     sharedAt: { type: Date, default: null },
 
+    // The capability that makes a share link work. Minted alongside sharedAt
+    // and destroyed with it, so revoking a share revokes every link that was
+    // ever handed out. 128 bits of randomness because possessing this *is*
+    // the authorisation - unlike the asset id, it must not be guessable.
+    // Uniqueness is enforced by a partial index below, not here; see why.
+    shareSlug: { type: String, default: null },
+
     // Bumped once per playback by POST /api/assets/:id/view, not by the range
     // route - a single viewing issues dozens of range requests.
     viewCount: { type: Number, default: 0 },
@@ -68,6 +76,21 @@ mediaAssetSchema.index({ ownerId: 1, kind: 1, capturedAt: -1 });
 // the sort, which is why sharedAt and viewCount are separate indexes.
 mediaAssetSchema.index({ visibility: 1, kind: 1, status: 1, sharedAt: -1 });
 mediaAssetSchema.index({ visibility: 1, kind: 1, status: 1, viewCount: -1 });
+
+/**
+ * Share links are looked up by slug on every request to /api/share, and two
+ * assets must never share one.
+ *
+ * Partial, not sparse. A sparse index only skips documents where the field is
+ * *absent* - an explicit null is still indexed, so with `default: null` every
+ * unshared asset would index the same null and the second one inserted would
+ * collide. That is not hypothetical: it broke batch photo upload, which uses
+ * insertMany and therefore writes the default straight through.
+ */
+mediaAssetSchema.index(
+  { shareSlug: 1 },
+  { unique: true, partialFilterExpression: { shareSlug: { $type: 'string' } } }
+);
 
 /**
  * `ownerId` is an ObjectId on a plain query and a User document once the
@@ -109,7 +132,11 @@ mediaAssetSchema.methods.toPublic = function (req) {
     height: this.height,
     status: this.status,
     visibility: this.visibility,
-    shared: this.visibility !== 'private',
+    // 'shared' has always meant "in the public catalog", and the Browse view
+    // reads it that way, so it stays pinned to 'public' now that 'unlisted'
+    // is a real third state rather than a placeholder in the enum.
+    shared: this.visibility === 'public',
+    linkShared: this.visibility === 'unlisted',
     sharedAt: this.sharedAt,
     viewCount: this.viewCount || 0,
     favorite: Boolean(this.favorite),
@@ -120,6 +147,13 @@ mediaAssetSchema.methods.toPublic = function (req) {
     posterUrl: this.posterKey ? `${base}/api/posters/${this._id}` : null,
     createdAt: this.createdAt,
   };
+
+  // Owner only, and deliberately so: the slug is a bearer credential. Handing
+  // it to every viewer of a public video would turn "anyone signed in can
+  // watch this" into "anyone at all can", permanently and untraceably.
+  if (isOwner && this.shareSlug) {
+    json.shareUrl = `${base}/share.html?s=${this.shareSlug}`;
+  }
 
   if (isPhoto) {
     json.capturedAt = this.capturedAt || this.createdAt;
@@ -136,13 +170,27 @@ mediaAssetSchema.methods.toPublic = function (req) {
 };
 
 /**
- * Keep sharedAt in lockstep with visibility so no route has to remember to.
- * Re-sharing something restamps it, which is deliberate: it should reappear
- * at the top of the "New" rail.
+ * Keep sharedAt and shareSlug in lockstep with visibility so no route has to
+ * remember to. Re-sharing something restamps sharedAt, which is deliberate: it
+ * should reappear at the top of the "New" rail.
+ *
+ * The slug is minted once and then kept for as long as the asset is shared at
+ * all, so flipping between 'unlisted' and 'public' does not invalidate a link
+ * someone has already been given. Going back to 'private' destroys it - that
+ * is the revoke, and it has to be a real one, so a link handed out before
+ * stops working rather than springing back to life on the next share.
  */
 mediaAssetSchema.pre('save', function (next) {
   if (this.isModified('visibility') || this.isNew) {
-    this.sharedAt = this.visibility === 'private' ? null : new Date();
+    const isPrivate = this.visibility === 'private';
+
+    this.sharedAt = isPrivate ? null : new Date();
+
+    if (isPrivate) {
+      this.shareSlug = null;
+    } else if (!this.shareSlug) {
+      this.shareSlug = crypto.randomBytes(16).toString('hex');
+    }
   }
   next();
 });

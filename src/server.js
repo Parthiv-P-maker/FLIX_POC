@@ -89,6 +89,9 @@ app.use('/api/stream', require('./routes/stream.routes'));
 // Posters and thumbnails used to sit behind express.static with no auth at
 // all. They are derived from the original, so they need the original's rules.
 app.use('/api/posters', require('./routes/posters.routes'));
+// The only unauthenticated API surface. Possession of the 128-bit slug is the
+// authorisation, which is the whole point of a share link.
+app.use('/api/share', require('./routes/share.routes'));
 app.use('/api/progress', require('./routes/progress.routes'));
 
 app.use((req, res) => res.status(404).json({ error: `No route for ${req.method} ${req.path}` }));

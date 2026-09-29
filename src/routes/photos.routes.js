@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const MediaAsset = require('../models/MediaAsset');
 const { requireAuth } = require('../middleware/auth');
@@ -45,9 +46,12 @@ router.post(
     const created = await MediaAsset.insertMany(
       files.map((file, i) => ({
         capturedAt: capturedAtFor(i),
-        // insertMany skips save middleware, so the hook that normally keeps
-        // sharedAt in step with visibility never runs here.
+        // insertMany skips save middleware, so the hook that normally derives
+        // these two from visibility never runs here and they have to be set by
+        // hand. A slug per photo, not per batch: they are separate assets and
+        // revoking one must not revoke the rest.
         sharedAt: shared ? new Date() : null,
+        shareSlug: shared ? crypto.randomBytes(16).toString('hex') : null,
         ownerId: req.user._id,
         kind: 'photo',
         title: (singleTitle || file.originalname).slice(0, 200),

@@ -122,6 +122,12 @@
           <section class="rail">
             <h2 class="rail-title">Your library</h2>
             <div class="grid" id="library-grid"></div>
+            <!-- Scrolled into view = fetch the next page. A hidden view has no
+                 box, so this never fires for a tab the user is not looking at. -->
+            <div class="sentinel" id="library-sentinel" hidden>
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Loading more…</span>
+            </div>
             <div class="empty" id="library-empty" hidden>
               <div class="empty-ico">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 6.2 4.2l11.6 6.5a1.5 1.5 0 0 1 0 2.6L6.2 19.8A1.5 1.5 0 0 1 4 18.5z"/></svg>
@@ -202,6 +208,11 @@
 
           <div id="timeline"></div>
 
+          <div class="sentinel" id="photos-sentinel" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Loading more…</span>
+          </div>
+
           <div class="empty" id="photos-no-match" hidden>
             <div class="empty-ico">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 1 0 4.55 13.46l4.24 4.25 1.42-1.42-4.25-4.24A7.5 7.5 0 0 0 10.5 3m0 2a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11"/></svg>
@@ -259,6 +270,7 @@
               <button class="btn btn-primary btn-block" type="submit">
                 <span class="btn-label">Upload video</span>
               </button>
+              <div class="upload-bar" id="video-bar" hidden><i></i></div>
               <p class="form-msg" id="video-status"></p>
             </form>
 
@@ -276,6 +288,7 @@
               <button class="btn btn-primary btn-block" type="submit">
                 <span class="btn-label">Upload photos</span>
               </button>
+              <div class="upload-bar" id="photo-bar" hidden><i></i></div>
               <p class="form-msg" id="photo-status"></p>
             </form>
           </div>
@@ -346,10 +359,32 @@
           <button class="icon-btn" id="player-close" aria-label="Close">&times;</button>
         </header>
         <video id="player" controls playsinline preload="metadata"></video>
+
+        <section class="about" id="player-about">
+          <p class="about-text" id="player-description" hidden></p>
+          <button class="link-btn" id="description-edit" hidden>Add a description</button>
+          <form class="about-form" id="description-form" hidden>
+            <label class="field">
+              <span class="field-label">Description</span>
+              <textarea name="description" rows="3" maxlength="2000"
+                        placeholder="What is this?"></textarea>
+            </label>
+            <div class="about-actions">
+              <button class="btn btn-primary" type="submit">
+                <span class="btn-label">Save</span>
+              </button>
+              <button class="btn btn-soft" type="button" id="description-cancel">Cancel</button>
+            </div>
+          </form>
+        </section>
+
         <footer class="modal-foot">
           <span class="muted-sm" id="player-meta"></span>
           <button class="btn btn-soft" id="player-share" hidden>
             <span class="btn-label">Share</span>
+          </button>
+          <button class="btn btn-soft" id="player-link" hidden>
+            <span class="btn-label">Copy link</span>
           </button>
           <button class="btn btn-danger" id="player-delete" hidden>Delete</button>
         </footer>
@@ -368,8 +403,27 @@
           <img id="photo-full" alt="" />
           <button class="nav-arrow nav-next" id="photo-next" aria-label="Next">&#8250;</button>
         </div>
+        <!-- A photo with no EXIF falls back to its upload time, which is
+             usually wrong. This is the only way to correct it. -->
+        <form class="about-form about-inline" id="capture-form" hidden>
+          <label class="field">
+            <span class="field-label">Date taken</span>
+            <input name="capturedAt" type="datetime-local" />
+          </label>
+          <div class="about-actions">
+            <button class="btn btn-primary" type="submit">
+              <span class="btn-label">Save date</span>
+            </button>
+            <button class="btn btn-soft" type="button" id="capture-reset"
+                    title="Fall back to the upload time">Clear</button>
+          </div>
+        </form>
+
         <footer class="modal-foot">
           <span class="muted-sm" id="photo-meta"></span>
+          <button class="btn btn-soft" id="photo-date" hidden>
+            <span class="btn-label">Edit date</span>
+          </button>
           <button class="btn btn-soft star-btn" id="photo-fav" aria-pressed="false">
             <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.6 2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/></svg>
             <span class="btn-label">Favourite</span>

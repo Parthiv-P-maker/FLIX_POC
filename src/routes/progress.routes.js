@@ -52,7 +52,7 @@ router.put(
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
     const isOwner = String(asset.ownerId) === String(req.user._id);
-    if (!isOwner && asset.visibility === 'private') {
+    if (!isOwner && asset.visibility !== 'public') {
       return res.status(403).json({ error: 'You do not have access to this asset' });
     }
 

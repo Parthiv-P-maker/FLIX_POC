@@ -289,6 +289,35 @@ async function pollUntilReady(id, token, tries = 40) {
     check('kind=all returns everything', body.assets.length === 3, `${body.assets.length} assets`);
   }
 
+  // ---- pagination -------------------------------------------------------
+  // The API has always paged; nothing ever asked it for page 2, so an
+  // off-by-one in skip() would have gone unnoticed. limit=1 forces several
+  // pages out of the handful of fixtures already uploaded.
+  console.log('\npagination');
+  {
+    const { body: p1 } = await json('/api/photos?limit=1&page=1', { headers: auth });
+    const { body: p2 } = await json('/api/photos?limit=1&page=2', { headers: auth });
+
+    const idOf = (b) => b.groups[0] && b.groups[0].items[0] && String(b.groups[0].items[0].id);
+
+    check('photo page 1 returns exactly one row', p1.groups.reduce((n, g) => n + g.items.length, 0) === 1);
+    check('photo page 1 reports more to come', p1.hasMore === true);
+    check('photo page 2 is a different photo', idOf(p1) && idOf(p2) && idOf(p1) !== idOf(p2),
+      `${idOf(p1)} vs ${idOf(p2)}`);
+    check('total counts the whole set, not the page', p1.total === 2, `total=${p1.total}`);
+    check('the last photo page reports no more', p2.hasMore === false);
+
+    const { body: a1 } = await json('/api/assets?limit=1&page=1', { headers: auth });
+    check('asset page 1 returns exactly one row', a1.assets.length === 1);
+    check('asset paging agrees with the total', a1.total === 1 && a1.hasMore === false,
+      `total=${a1.total} hasMore=${a1.hasMore}`);
+
+    // Walking past the end is a normal thing for a scroll to do once.
+    const { res: beyondRes, body: beyond } = await json('/api/photos?limit=1&page=99', { headers: auth });
+    check('a page past the end is empty, not an error',
+      beyondRes.status === 200 && beyond.groups.length === 0, `got ${beyondRes.status}`);
+  }
+
   // ---- capture dates --------------------------------------------------
   // The timeline is meaningless if every photo lands on its upload date, and
   // that is exactly what happened before EXIF was parsed properly.
@@ -578,6 +607,158 @@ async function pollUntilReady(id, token, tries = 40) {
     const { body: cat } = await json('/api/catalog', { headers: otherAuth });
     check('unshared video leaves the catalog',
       !cat.assets.some((a) => String(a.id) === String(assetId)));
+  }
+
+  // ---- share by link (unlisted) -----------------------------------------
+  console.log('\nshare by link');
+  {
+    const { res, body } = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ visibility: 'unlisted' }),
+    });
+    check('PATCH visibility=unlisted returns 200', res.status === 200, `got ${res.status}`);
+    check('unlisted is not "shared"', body.asset.shared === false && body.asset.linkShared === true);
+    check('owner is given a share link', typeof body.asset.shareUrl === 'string',
+      body.asset.shareUrl);
+
+    const slug = new URL(body.asset.shareUrl, BASE).searchParams.get('s');
+    check('the slug is 128 bits of hex', /^[a-f0-9]{32}$/.test(slug || ''), slug);
+
+    // The whole point: no account, no token, still plays.
+    const { res: metaRes, body: meta } = await json(`/api/share/${slug}`);
+    check('share metadata needs no auth at all', metaRes.status === 200, `got ${metaRes.status}`);
+    check('share payload carries a media url', typeof meta.mediaUrl === 'string');
+    check('share payload does not leak the owner',
+      meta.ownerId === undefined && meta.ownerName === undefined);
+    check('share payload does not leak view counts or size',
+      meta.viewCount === undefined && meta.sizeBytes === undefined);
+
+    const anonStream = await fetch(`${BASE}/api/share/${slug}/media`, {
+      headers: { Range: 'bytes=0-1023' },
+    });
+    check('anonymous range request returns 206', anonStream.status === 206, `got ${anonStream.status}`);
+    check('anonymous stream sends Content-Range', !!anonStream.headers.get('content-range'),
+      anonStream.headers.get('content-range'));
+    await anonStream.arrayBuffer();
+
+    const anonPoster = await fetch(`${BASE}/api/share/${slug}/poster`);
+    check('anonymous poster returns 200', anonPoster.status === 200, `got ${anonPoster.status}`);
+    await anonPoster.arrayBuffer();
+
+    // Unlisted means link-only. Knowing the id must not be enough, even for a
+    // signed-in account - ObjectIds are too predictable for that.
+    const { res: byId } = await json(`/api/assets/${assetId}`, { headers: otherAuth });
+    check('unlisted is not readable by id', byId.status === 403, `got ${byId.status}`);
+
+    const byIdStream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherToken}`);
+    check('unlisted is not streamable by id', byIdStream.status === 403, `got ${byIdStream.status}`);
+
+    const { body: cat } = await json('/api/catalog', { headers: otherAuth });
+    check('unlisted stays out of the catalog',
+      !cat.assets.some((a) => String(a.id) === String(assetId)));
+
+    const bogus = await fetch(`${BASE}/api/share/${'0'.repeat(32)}`);
+    check('an unknown slug returns 404', bogus.status === 404, `got ${bogus.status}`);
+
+    // Revoking has to kill the link, not just hide the asset.
+    await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ visibility: 'private' }),
+    });
+    const revoked = await fetch(`${BASE}/api/share/${slug}`);
+    check('revoking the share kills the link', revoked.status === 404, `got ${revoked.status}`);
+    const revokedMedia = await fetch(`${BASE}/api/share/${slug}/media`);
+    check('revoked link cannot stream either', revokedMedia.status === 404, `got ${revokedMedia.status}`);
+
+    // Re-sharing mints a fresh slug rather than resurrecting the old one.
+    const { body: reshared } = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ visibility: 'unlisted' }),
+    });
+    const newSlug = new URL(reshared.asset.shareUrl, BASE).searchParams.get('s');
+    check('re-sharing does not reuse the revoked slug', newSlug !== slug);
+
+    await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ visibility: 'private' }),
+    });
+  }
+
+  // ---- descriptions + capture dates --------------------------------------
+  console.log('\nmetadata editing');
+  {
+    const { res, body } = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ description: 'A test pattern, six seconds long.' }),
+    });
+    check('PATCH description returns 200', res.status === 200, `got ${res.status}`);
+    check('description round-trips', body.asset.description === 'A test pattern, six seconds long.');
+
+    const { body: cleared } = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ description: '' }),
+    });
+    check('an empty description clears it', cleared.asset.description === '');
+
+    const tooLong = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ description: 'x'.repeat(2001) }),
+    });
+    check('an over-long description is rejected', tooLong.res.status === 400, `got ${tooLong.res.status}`);
+
+    const onVideo = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ capturedAt: '2020-01-01T00:00:00.000Z' }),
+    });
+    check('capturedAt is rejected on a video', onVideo.res.status === 400, `got ${onVideo.res.status}`);
+
+    // Remember the real date: the year-facet checks further down count photos
+    // by year, so moving one to 2019 and leaving it there would fail a test
+    // that has nothing to do with this one.
+    const { body: before } = await json(`/api/assets/${photoIds[0]}`, { headers: auth });
+    const originalCapturedAt = before.asset.capturedAt;
+
+    const { res: pRes, body: pBody } = await json(`/api/assets/${photoIds[0]}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ capturedAt: '2019-07-04T12:30:00.000Z' }),
+    });
+    check('capturedAt is accepted on a photo', pRes.status === 200, `got ${pRes.status}`);
+    check('capturedAt round-trips',
+      new Date(pBody.asset.capturedAt).toISOString() === '2019-07-04T12:30:00.000Z',
+      pBody.asset.capturedAt);
+
+    const future = await json(`/api/assets/${photoIds[0]}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ capturedAt: '2999-01-01T00:00:00.000Z' }),
+    });
+    check('a future capturedAt is rejected', future.res.status === 400, `got ${future.res.status}`);
+
+    const { body: restored } = await json(`/api/assets/${photoIds[0]}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ capturedAt: originalCapturedAt }),
+    });
+    check('the original capture date is restored',
+      new Date(restored.asset.capturedAt).toISOString() === new Date(originalCapturedAt).toISOString(),
+      restored.asset.capturedAt);
+
+    const bothFlags = await json(`/api/assets/${assetId}`, {
+      method: 'PATCH',
+      headers: jsonAuth(auth),
+      body: JSON.stringify({ shared: true, visibility: 'unlisted' }),
+    });
+    check('shared and visibility together are rejected', bothFlags.res.status === 400,
+      `got ${bothFlags.res.status}`);
   }
 
   // ---- favourites + photo filters ---------------------------------------

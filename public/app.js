@@ -37,6 +37,52 @@ async function api(path, { method = 'GET', body, isForm = false } = {}) {
   return data;
 }
 
+/**
+ * Upload with a real progress readout.
+ *
+ * fetch() exposes no upload progress at all, which is why a 2 GB video used to
+ * sit on a motionless "Uploading…" for minutes with no way to tell a slow
+ * network from a hung request. XMLHttpRequest is the only thing in the
+ * platform that reports bytes sent, so uploads - and only uploads - use it.
+ */
+function upload(path, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', path);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.upload.addEventListener('progress', (e) => {
+      // Not every transfer can report a total; leave the bar indeterminate
+      // rather than inventing a percentage.
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+
+    // The last bytes leaving the browser is not the end of the story: the
+    // server still has to write the file and insert the row. Pin the bar at
+    // 100% and let the caller's status text carry the rest.
+    xhr.upload.addEventListener('load', () => onProgress(1));
+
+    xhr.addEventListener('load', () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* keep {} */ }
+
+      if (xhr.status === 401 && currentUser) {
+        signOut();
+        return reject(new Error('Session expired, please sign in again'));
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        return reject(new Error(data.error || `Upload failed (${xhr.status})`));
+      }
+      resolve(data);
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload cancelled')));
+
+    xhr.send(formData);
+  });
+}
+
 // <video src> and <img src> cannot carry an Authorization header, so the
 // stream and poster routes take the token in the query string instead.
 const withToken = (url) => `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
@@ -207,6 +253,53 @@ const GLOBE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10
 
 const plays = (n) => `${n} ${n === 1 ? 'play' : 'plays'}`;
 
+const TRASH_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4zM6 9h12l-1 11.2A2 2 0 0 1 15 22H9a2 2 0 0 1-2-1.8z"/></svg>';
+
+/**
+ * Delete an asset, with the confirm and the error reporting in one place.
+ *
+ * Every caller used to inline this, and the two that mattered - the player and
+ * the lightbox - had already closed their overlay before awaiting, with no
+ * catch. A failure there showed the user a vanished item, no error, and an
+ * unhandled rejection in the console, then brought it back on the next reload.
+ *
+ * @returns {Promise<boolean>} whether the asset was actually deleted
+ */
+async function deleteAsset(asset, onDone) {
+  const noun = asset.kind === 'photo' ? 'Photo' : 'Video';
+  if (!confirm(`Delete "${asset.title}"? This removes the file from disk.`)) return false;
+
+  try {
+    await api(`/api/assets/${asset.id}`, { method: 'DELETE' });
+    toast(`${noun} deleted`);
+    if (onDone) onDone();
+    return true;
+  } catch (err) {
+    toast(err.message);
+    return false;
+  }
+}
+
+/**
+ * The little bin that appears on a tile you own.
+ *
+ * A <span>, not a <button>, because tiles and photo cells are themselves
+ * buttons and nesting one inside another is invalid HTML - the same reason
+ * .cell-star is built this way. stopPropagation keeps the click off the tile,
+ * which would otherwise open the player behind the confirm.
+ */
+function trashControl(asset, onDone) {
+  const trash = document.createElement('span');
+  trash.className = 'cell-trash';
+  trash.title = `Delete this ${asset.kind === 'photo' ? 'photo' : 'video'}`;
+  trash.innerHTML = TRASH_SVG;
+  trash.addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteAsset(asset, onDone);
+  });
+  return trash;
+}
+
 /**
  * One tile shape for both the private library and the shared catalog.
  *
@@ -260,6 +353,14 @@ function videoTile(asset, progressPercent, { showOwner = false } = {}) {
       asset.isOwner ? 'You' : asset.ownerName || 'Unknown member';
   }
 
+  // Deleting used to require opening the player first, which is a lot of
+  // ceremony for clearing out a failed upload.
+  if (asset.isOwner) {
+    tile.querySelector('.thumb').appendChild(
+      trashControl(asset, () => { loadLibrary(); loadCatalog().catch(() => {}); loadProfile(); })
+    );
+  }
+
   if (ready) tile.addEventListener('click', () => openPlayer(asset));
   return tile;
 }
@@ -282,32 +383,63 @@ function paintHero(assets, percentById) {
   hero.hidden = false;
 }
 
-async function loadLibrary() {
-  const [library, cont] = await Promise.all([
-    api('/api/assets?limit=100'),
-    api('/api/progress/continue'),
-  ]);
+// A page size, not a ceiling. The API has always paginated; the client used to
+// ask for 100 and ignore `hasMore`, which meant video 101 existed but could
+// never be reached.
+const LIBRARY_PAGE_SIZE = 24;
 
-  const percentById = new Map(cont.items.map((i) => [String(i.asset.id), i.percent]));
+const libraryPaging = { page: 0, hasMore: false, loading: false, percentById: new Map() };
 
-  const grid = $('#library-grid');
-  grid.replaceChildren();
-  library.assets.forEach((a) => grid.appendChild(videoTile(a, percentById.get(String(a.id)))));
+/**
+ * @param {boolean} append  true to add the next page, false to reload from the
+ *                          first one. A reload is what every mutation wants;
+ *                          append is only ever driven by the scroll sentinel.
+ */
+async function loadLibrary({ append = false } = {}) {
+  if (libraryPaging.loading) return;
+  libraryPaging.loading = true;
+  const page = append ? libraryPaging.page + 1 : 1;
 
-  const hasAny = library.assets.length > 0;
-  $('#library-empty').hidden = hasAny;
-  $('#watch-sub').textContent = hasAny
-    ? `${plural(library.total, 'video')} in your library`
-    : 'Nothing here yet.';
+  try {
+    // "Continue watching" and the hero describe the whole library, not the page
+    // that just arrived, so they are only rebuilt on a fresh load.
+    const [library, cont] = await Promise.all([
+      api(`/api/assets?limit=${LIBRARY_PAGE_SIZE}&page=${page}`),
+      append ? Promise.resolve(null) : api('/api/progress/continue'),
+    ]);
 
-  paintHero(library.assets, percentById);
+    if (cont) {
+      libraryPaging.percentById = new Map(cont.items.map((i) => [String(i.asset.id), i.percent]));
+    }
+    const percentById = libraryPaging.percentById;
 
-  const continueGrid = $('#continue-grid');
-  continueGrid.replaceChildren();
-  cont.items.forEach((i) => continueGrid.appendChild(videoTile(i.asset, i.percent)));
-  $('#continue-row').hidden = cont.items.length === 0;
+    const grid = $('#library-grid');
+    if (!append) grid.replaceChildren();
+    library.assets.forEach((a) => grid.appendChild(videoTile(a, percentById.get(String(a.id)))));
 
-  schedulePollIfProcessing(library.assets);
+    libraryPaging.page = page;
+    libraryPaging.hasMore = library.hasMore;
+    $('#library-sentinel').hidden = !library.hasMore;
+
+    const hasAny = grid.childElementCount > 0;
+    $('#library-empty').hidden = hasAny;
+    $('#watch-sub').textContent = hasAny
+      ? `${plural(library.total, 'video')} in your library`
+      : 'Nothing here yet.';
+
+    if (!append) {
+      paintHero(library.assets, percentById);
+
+      const continueGrid = $('#continue-grid');
+      continueGrid.replaceChildren();
+      cont.items.forEach((i) => continueGrid.appendChild(videoTile(i.asset, i.percent)));
+      $('#continue-row').hidden = cont.items.length === 0;
+    }
+
+    schedulePollIfProcessing(library.assets);
+  } finally {
+    libraryPaging.loading = false;
+  }
 }
 
 /**
@@ -402,16 +534,127 @@ let lastSentAt = 0;
 let playerSession = 0;
 let playerAbort = null;
 
-/** Reflects share state on the player's toggle. Owner-only; hidden otherwise. */
+/** Reflects share state on the player's toggles. Owner-only; hidden otherwise. */
 function paintShareButton(asset) {
   const btn = $('#player-share');
+  const link = $('#player-link');
+
   btn.hidden = !asset.isOwner;
+  link.hidden = !asset.isOwner;
   $('#player-delete').hidden = !asset.isOwner;
   if (!asset.isOwner) return;
 
   btn.querySelector('.btn-label').textContent = asset.shared ? 'Shared · make private' : 'Share to catalog';
   btn.classList.toggle('is-on', Boolean(asset.shared));
+
+  // Three visibility states, two controls. This one owns 'unlisted': it mints
+  // a link on first use, and offers to revoke once one exists.
+  const hasLink = Boolean(asset.shareUrl);
+  link.querySelector('.btn-label').textContent = hasLink ? 'Copy link' : 'Get a link';
+  link.classList.toggle('is-on', asset.linkShared === true);
 }
+
+/**
+ * The description panel.
+ *
+ * Read-only for a viewer, editable for the owner. An asset with no description
+ * shows nothing at all to a viewer - an empty paragraph is just a gap - but
+ * still offers the owner a way to add one.
+ */
+function paintDescription(asset) {
+  const text = $('#player-description');
+  const edit = $('#description-edit');
+  const form = $('#description-form');
+
+  const body = (asset.description || '').trim();
+
+  text.textContent = body;
+  text.hidden = body.length === 0;
+
+  form.hidden = true;
+  edit.hidden = !asset.isOwner;
+  edit.textContent = body ? 'Edit description' : 'Add a description';
+  form.description.value = body;
+
+  // Someone else's video with no description has nothing to put here, and the
+  // section's own padding would otherwise leave a gap above the footer.
+  $('#player-about').hidden = !asset.isOwner && body.length === 0;
+}
+
+$('#description-edit').addEventListener('click', () => {
+  $('#description-form').hidden = false;
+  $('#description-edit').hidden = true;
+  $('#player-description').hidden = true;
+  $('#description-form').description.focus();
+});
+
+$('#description-cancel').addEventListener('click', () => {
+  if (playingAsset) paintDescription(playingAsset);
+});
+
+$('#description-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!playingAsset) return;
+  const btn = e.currentTarget.querySelector('button[type="submit"]');
+
+  btn.disabled = true;
+  try {
+    const { asset } = await api(`/api/assets/${playingAsset.id}`, {
+      method: 'PATCH',
+      body: { description: e.currentTarget.description.value },
+    });
+    // Keep the in-memory copy in step, the same way the share toggle does.
+    playingAsset = { ...playingAsset, ...asset };
+    paintDescription(playingAsset);
+    toast('Description saved');
+    loadLibrary();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/**
+ * Copy a share link, minting one if this is the first time.
+ *
+ * Going through 'unlisted' rather than 'public' is the point: the recipient
+ * needs no account, but the video still does not show up in Browse for
+ * everyone else.
+ */
+$('#player-link').addEventListener('click', async () => {
+  if (!playingAsset) return;
+  const btn = $('#player-link');
+
+  btn.disabled = true;
+  try {
+    let asset = playingAsset;
+
+    if (!asset.shareUrl) {
+      const res = await api(`/api/assets/${asset.id}`, {
+        method: 'PATCH',
+        body: { visibility: 'unlisted' },
+      });
+      asset = { ...asset, ...res.asset };
+      playingAsset = asset;
+      paintShareButton(asset);
+      loadLibrary();
+    }
+
+    try {
+      await navigator.clipboard.writeText(asset.shareUrl);
+      toast('Share link copied — anyone with it can watch, no account needed');
+    } catch {
+      // Clipboard access can be denied even on a secure origin. Showing the
+      // link beats silently failing; the user can select it by hand.
+      toast(asset.shareUrl);
+    }
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function openPlayer(asset) {
   // Every open supersedes the one before it. There is a single <video>
@@ -436,6 +679,7 @@ async function openPlayer(asset) {
   ].filter(Boolean).join('  ·  ');
 
   paintShareButton(asset);
+  paintDescription(asset);
 
   // Show the overlay straight away so the click feels immediate; the source is
   // attached below, once we know where to start from.
@@ -547,14 +791,15 @@ $('#player-share').addEventListener('click', async () => {
 
 $('#player-delete').addEventListener('click', async () => {
   if (!playingAsset) return;
-  if (!confirm(`Delete "${playingAsset.title}"? This removes the file from disk.`)) return;
-  const id = playingAsset.id;
+  const asset = playingAsset;
+
+  // Confirm while the video is still up, so the user can see what they are
+  // about to delete. Only tear the player down once they have said yes.
+  const deleted = await deleteAsset(asset, () => { loadLibrary(); loadProfile(); });
+  if (!deleted) return;
+
   playingAsset = null;           // stop the pause handler writing progress for a dead row
   closePlayer();
-  await api(`/api/assets/${id}`, { method: 'DELETE' });
-  toast('Video deleted');
-  loadLibrary();
-  loadProfile();
 });
 
 /* ------------------------------------------------------------------ *
@@ -651,6 +896,10 @@ function photoCell(photo, index, height) {
   });
   cell.appendChild(star);
 
+  if (photo.isOwner) {
+    cell.appendChild(trashControl(photo, () => { loadPhotos(); loadProfile(); }));
+  }
+
   if (photo.status === 'ready') cell.addEventListener('click', () => showPhoto(index));
   return cell;
 }
@@ -724,42 +973,111 @@ function paintYearChips(years) {
   }
 }
 
-function photoQueryString() {
-  const params = new URLSearchParams({ limit: '500' });
+// The timeline used to ask for 500 photos and render every cell at once.
+// Paging keeps the first paint cheap and makes photo 501 reachable.
+const PHOTO_PAGE_SIZE = 60;
+
+const photoPaging = { page: 0, hasMore: false, loading: false };
+
+function photoQueryString(page) {
+  const params = new URLSearchParams({ limit: String(PHOTO_PAGE_SIZE), page: String(page) });
   if (photoFilter.q) params.set('q', photoFilter.q);
   if (photoFilter.favorite) params.set('favorite', '1');
   if (photoFilter.year) params.set('year', String(photoFilter.year));
   return params.toString();
 }
 
+/**
+ * Fold a newly-fetched page into the groups already on screen.
+ *
+ * A month straddles a page boundary far more often than not - 60 photos rarely
+ * lands exactly on the 1st - so the first group of page 2 is usually the same
+ * month as the last group of page 1. Appending it blindly would render the
+ * month header twice with the photos split across it.
+ */
+function mergePhotoGroups(existing, incoming) {
+  const byKey = new Map(existing.map((g) => [g.key, g]));
+
+  for (const group of incoming) {
+    const current = byKey.get(group.key);
+    if (current) {
+      current.items.push(...group.items);
+    } else {
+      byKey.set(group.key, group);
+      existing.push(group);
+    }
+  }
+  return existing;
+}
+
 const filtersActive = () =>
   Boolean(photoFilter.q || photoFilter.favorite || photoFilter.year);
 
-async function loadPhotos() {
-  const data = await api(`/api/photos?${photoQueryString()}`);
-  photoGroups = data.groups;
-  renderTimeline();
+async function loadPhotos({ append = false } = {}) {
+  if (photoPaging.loading) return;
+  photoPaging.loading = true;
+  const page = append ? photoPaging.page + 1 : 1;
 
-  const { years, favorites } = data.facets;
-  paintYearChips(years);
-  $('#fav-count').textContent = favorites || '';
+  try {
+    const data = await api(`/api/photos?${photoQueryString(page)}`);
 
-  document.querySelectorAll('#photo-filters [data-filter]').forEach((c) =>
-    c.classList.toggle('is-active',
-      c.dataset.filter === (photoFilter.favorite ? 'fav' : 'all')));
+    photoGroups = append ? mergePhotoGroups(photoGroups, data.groups) : data.groups;
+    photoPaging.page = page;
+    photoPaging.hasMore = data.hasMore;
+    $('#photos-sentinel').hidden = !data.hasMore;
 
-  // Three distinct states: an empty library, a filter that matched nothing,
-  // and results. Showing the "upload your first photo" panel to someone whose
-  // search simply missed would be wrong.
-  const libraryEmpty = data.total === 0 && !filtersActive();
-  $('#photos-empty').hidden = !libraryEmpty;
-  $('#photos-no-match').hidden = !(data.total === 0 && filtersActive());
+    // Always a full re-render, even when appending: the justified solver packs
+    // rows greedily, so new photos change where the *existing* rows break.
+    renderTimeline();
 
-  $('#photos-sub').textContent = data.total
-    ? `${plural(data.total, 'photo')} across ${plural(data.groups.length, 'month')}` +
-      (filtersActive() ? ' · filtered' : '')
-    : libraryEmpty ? 'Nothing here yet.' : 'No matches.';
+    const { years, favorites } = data.facets;
+    paintYearChips(years);
+    $('#fav-count').textContent = favorites || '';
+
+    document.querySelectorAll('#photo-filters [data-filter]').forEach((c) =>
+      c.classList.toggle('is-active',
+        c.dataset.filter === (photoFilter.favorite ? 'fav' : 'all')));
+
+    // Three distinct states: an empty library, a filter that matched nothing,
+    // and results. Showing the "upload your first photo" panel to someone whose
+    // search simply missed would be wrong.
+    const libraryEmpty = data.total === 0 && !filtersActive();
+    $('#photos-empty').hidden = !libraryEmpty;
+    $('#photos-no-match').hidden = !(data.total === 0 && filtersActive());
+
+    // Counts describe the whole filtered set, not the pages fetched so far -
+    // "12 of 340 photos" would be about the scroll position, not the library.
+    $('#photos-sub').textContent = data.total
+      ? `${plural(data.total, 'photo')} across ${plural(photoGroups.length, 'month')}` +
+        (filtersActive() ? ' · filtered' : '')
+      : libraryEmpty ? 'Nothing here yet.' : 'No matches.';
+  } finally {
+    photoPaging.loading = false;
+  }
 }
+
+/**
+ * Infinite scroll.
+ *
+ * An IntersectionObserver rather than a scroll handler: it does not fire on
+ * every pixel, and a sentinel inside a display:none view has no box at all, so
+ * a hidden tab cannot quietly page through its whole library in the
+ * background. `loading` guards the case where a fast scroll re-triggers before
+ * the previous page lands.
+ */
+function watchSentinel(selector, hasMore, load) {
+  const sentinel = $(selector);
+  new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    if (!hasMore() || !currentUser) return;
+    load().catch((err) => toast(err.message));
+  }, { rootMargin: '400px' }).observe(sentinel);
+}
+
+watchSentinel('#library-sentinel', () => libraryPaging.hasMore,
+  () => loadLibrary({ append: true }));
+watchSentinel('#photos-sentinel', () => photoPaging.hasMore,
+  () => loadPhotos({ append: true }));
 
 async function toggleFavorite(photo) {
   const next = !photo.favorite;
@@ -852,7 +1170,63 @@ function paintPhotoMeta() {
   fav.classList.toggle('is-on', Boolean(photo.favorite));
   fav.setAttribute('aria-pressed', String(Boolean(photo.favorite)));
   fav.querySelector('.btn-label').textContent = photo.favorite ? 'Favourited' : 'Favourite';
+
+  $('#photo-date').hidden = !photo.isOwner;
+  $('#capture-form').hidden = true;
 }
+
+/**
+ * <input type="datetime-local"> has no timezone, so it wants a local-time
+ * string - handing it an ISO string with a Z shifts the value by the user's
+ * offset, and the date they see is not the date they stored.
+ */
+function toLocalInputValue(date) {
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+$('#photo-date').addEventListener('click', () => {
+  if (photoIndex < 0) return;
+  const form = $('#capture-form');
+  form.capturedAt.value = toLocalInputValue(flatPhotos[photoIndex].capturedAt);
+  form.hidden = !form.hidden;
+});
+
+async function saveCaptureDate(value) {
+  if (photoIndex < 0) return;
+  const photo = flatPhotos[photoIndex];
+
+  try {
+    const { asset } = await api(`/api/assets/${photo.id}`, {
+      method: 'PATCH',
+      body: { capturedAt: value },
+    });
+    // Mutate in place: flatPhotos and photoGroups share these objects, so the
+    // timeline picks the new date up without a refetch.
+    photo.capturedAt = asset.capturedAt;
+    paintPhotoMeta();
+    $('#capture-form').hidden = true;
+    toast(value === null ? 'Date reset to the upload time' : 'Capture date updated');
+    // The date decides which month group it belongs to, so the timeline has to
+    // be rebuilt rather than repainted.
+    loadPhotos();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+$('#capture-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const value = e.currentTarget.capturedAt.value;
+  if (!value) return toast('Pick a date, or use Clear to fall back to the upload time');
+  // The input gives local time with no zone; let Date attach the browser's.
+  saveCaptureDate(new Date(value).toISOString());
+});
+
+$('#capture-reset').addEventListener('click', () => saveCaptureDate(null));
 
 function showPhoto(index) {
   if (index < 0 || index >= flatPhotos.length) return;
@@ -868,6 +1242,7 @@ function showPhoto(index) {
 
 function closeLightbox() {
   $('#photo-overlay').hidden = true;
+  $('#capture-form').hidden = true;
   $('#photo-full').removeAttribute('src');
   photoIndex = -1;
 }
@@ -888,13 +1263,17 @@ $('#photo-fav').addEventListener('click', () => {
 $('#photo-delete').addEventListener('click', async () => {
   if (photoIndex < 0) return;
   const photo = flatPhotos[photoIndex];
-  if (!confirm(`Delete "${photo.title}"?`)) return;
-  closeLightbox();
-  await api(`/api/assets/${photo.id}`, { method: 'DELETE' });
-  toast('Photo deleted');
-  loadPhotos();
-  loadProfile();
+
+  const deleted = await deleteAsset(photo, () => { loadPhotos(); loadProfile(); });
+  if (deleted) closeLightbox();
 });
+
+// Both overlays now contain text fields - the description editor and the date
+// picker - and "f" for favourite or an arrow for the next photo would fire
+// mid-word. Escape still works, because dismissing is always safe.
+const isTyping = (target) =>
+  target instanceof HTMLElement &&
+  (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
 
 document.addEventListener('keydown', (e) => {
   if (!$('#player-overlay').hidden) {
@@ -902,7 +1281,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if ($('#photo-overlay').hidden) return;
-  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'Escape') return closeLightbox();
+  if (isTyping(e.target)) return;
   if (e.key === 'ArrowLeft') showPhoto(photoIndex - 1);
   if (e.key === 'ArrowRight') showPhoto(photoIndex + 1);
   if (e.key === 'f' || e.key === 'F') $('#photo-fav').click();
@@ -998,6 +1378,31 @@ $('#password-form').addEventListener('submit', async (e) => {
  * Uploads
  * ------------------------------------------------------------------ */
 
+/**
+ * Drives one upload's progress bar and status line.
+ *
+ * Returns the onProgress callback `upload()` expects. Reaching 100% means the
+ * bytes have left the browser, not that the request is done - the server still
+ * has to write the file and insert the row - so the wording changes rather
+ * than claiming completion.
+ */
+function progressBar(barSel, status, noun) {
+  const bar = $(barSel);
+  const fill = bar.querySelector('i');
+
+  bar.hidden = false;
+  fill.style.width = '0%';
+  status.textContent = `Uploading ${noun}…`;
+
+  return (fraction) => {
+    const percent = Math.round(fraction * 100);
+    fill.style.width = `${percent}%`;
+    status.textContent = percent >= 100
+      ? 'Finishing up…'
+      : `Uploading ${noun}… ${percent}%`;
+  };
+}
+
 /** Wires a dropzone to its hidden file input and reflects the selection. */
 function wireDrop(dropSel, input, describe) {
   const drop = $(dropSel);
@@ -1055,9 +1460,9 @@ $('#video-form').addEventListener('submit', async (e) => {
 
   btn.disabled = true;
   status.className = 'form-msg';
-  status.textContent = 'Uploading…';
+  const setProgress = progressBar('#video-bar', status, 'video');
   try {
-    const data = await api('/api/assets', { method: 'POST', body: fd, isForm: true });
+    const data = await upload('/api/assets', fd, setProgress);
     status.classList.add('is-ok');
     status.textContent = `Uploaded "${data.asset.title}". Processing now.` +
       (data.asset.shared ? ' It will appear in Browse once ready.' : '');
@@ -1069,6 +1474,7 @@ $('#video-form').addEventListener('submit', async (e) => {
     status.classList.add('is-err');
     status.textContent = err.message;
   } finally {
+    $('#video-bar').hidden = true;
     btn.disabled = false;
   }
 });
@@ -1090,9 +1496,9 @@ $('#photo-form').addEventListener('submit', async (e) => {
 
   btn.disabled = true;
   status.className = 'form-msg';
-  status.textContent = 'Uploading…';
+  const setProgress = progressBar('#photo-bar', status, 'photos');
   try {
-    const data = await api('/api/photos', { method: 'POST', body: fd, isForm: true });
+    const data = await upload('/api/photos', fd, setProgress);
     status.classList.add('is-ok');
     status.textContent = `Uploaded ${plural(data.count, 'photo')}. Building thumbnails…`;
     form.reset();
@@ -1103,6 +1509,7 @@ $('#photo-form').addEventListener('submit', async (e) => {
     status.classList.add('is-err');
     status.textContent = err.message;
   } finally {
+    $('#photo-bar').hidden = true;
     btn.disabled = false;
   }
 });

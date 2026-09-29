@@ -93,8 +93,10 @@ router.get(
     const asset = await MediaAsset.findById(req.params.id).populate('ownerId', 'displayName');
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
+    // Public only for non-owners - 'unlisted' is reachable by slug, not by id.
+    // Same rule as middleware/assetAccess.js; see the comment there.
     const isOwner = String(asset.ownerId?._id ?? asset.ownerId) === String(req.user._id);
-    if (!isOwner && asset.visibility === 'private') {
+    if (!isOwner && asset.visibility !== 'public') {
       return res.status(403).json({ error: 'You do not have access to this asset' });
     }
 
@@ -121,15 +123,30 @@ router.patch(
     const asset = await MediaAsset.findOne({ _id: req.params.id, ownerId: req.user._id });
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
-    const { shared, favorite, title } = req.body || {};
+    const { shared, favorite, title, description, capturedAt, visibility } = req.body || {};
+
+    if (shared !== undefined && visibility !== undefined) {
+      return res.status(400).json({ error: 'Send either shared or visibility, not both' });
+    }
 
     if (shared !== undefined) {
       if (typeof shared !== 'boolean') {
         return res.status(400).json({ error: 'shared must be a boolean' });
       }
-      // Only ever 'public' or 'private' from here. 'unlisted' stays in the
-      // enum for a share-by-link feature that does not exist yet.
+      // The original two-state toggle, kept because it is what the catalog
+      // switch means: in Browse, or not. `visibility` below is the richer
+      // control that can also reach 'unlisted'.
       asset.visibility = shared ? 'public' : 'private';
+    }
+
+    if (visibility !== undefined) {
+      if (!MediaAsset.VISIBILITIES.includes(visibility)) {
+        return res.status(400).json({
+          error: `visibility must be one of: ${MediaAsset.VISIBILITIES.join(', ')}`,
+        });
+      }
+      // The pre-save hook mints or destroys shareSlug from here.
+      asset.visibility = visibility;
     }
 
     if (favorite !== undefined) {
@@ -145,6 +162,36 @@ router.patch(
         return res.status(400).json({ error: 'Title must be 1-200 characters' });
       }
       asset.title = next;
+    }
+
+    if (description !== undefined) {
+      // Unlike title, empty is meaningful here - it is how you remove one.
+      const next = String(description).trim();
+      if (next.length > 2000) {
+        return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
+      }
+      asset.description = next;
+    }
+
+    if (capturedAt !== undefined) {
+      // A photo with no EXIF falls back to upload time, which is usually
+      // wrong and, until now, uncorrectable. null puts it back on that
+      // fallback rather than pinning a bad date forever.
+      if (asset.kind !== 'photo') {
+        return res.status(400).json({ error: 'capturedAt only applies to photos' });
+      }
+      if (capturedAt === null) {
+        asset.capturedAt = null;
+      } else {
+        const when = new Date(capturedAt);
+        if (Number.isNaN(when.getTime())) {
+          return res.status(400).json({ error: 'capturedAt must be a date or null' });
+        }
+        if (when.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+          return res.status(400).json({ error: 'capturedAt cannot be in the future' });
+        }
+        asset.capturedAt = when;
+      }
     }
 
     // save(), not findOneAndUpdate(): the pre-save hook is what keeps
@@ -167,7 +214,7 @@ router.post(
     if (!asset) return res.status(404).json({ error: 'Asset not found' });
 
     const isOwner = String(asset.ownerId) === String(req.user._id);
-    if (!isOwner && asset.visibility === 'private') {
+    if (!isOwner && asset.visibility !== 'public') {
       return res.status(403).json({ error: 'You do not have access to this asset' });
     }
 

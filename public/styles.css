@@ -774,3 +774,199 @@ svg { fill: currentColor; }
   .modal { border-radius: 0; border: none; height: 100%; display: flex; flex-direction: column; }
   .lightbox-stage { flex: 1; display: grid; place-items: center; }
 }
+
+/* ================= delete control on tiles and cells ================= */
+
+/* Mirrors .cell-star: hidden until hover so a grid of bins does not read as a
+   warning, and sat on the opposite corner so the two never overlap. */
+.cell-trash {
+  position: absolute; top: 7px; left: 7px;
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  color: rgba(255, 255, 255, 0.82);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.16s, transform 0.16s, color 0.16s, background 0.16s;
+  cursor: pointer;
+}
+.photo-cell:hover .cell-trash,
+.photo-cell:focus-within .cell-trash,
+.tile:hover .cell-trash,
+.tile:focus-within .cell-trash { opacity: 1; transform: scale(1); }
+.cell-trash svg { width: 14px; height: 14px; }
+.cell-trash:hover { background: rgba(0, 0, 0, 0.8); color: var(--err); }
+
+/* Touch has no hover, so the control would be unreachable without this. */
+@media (hover: none) {
+  .cell-trash, .cell-star { opacity: 1; transform: scale(1); }
+}
+
+/* ================= infinite-scroll sentinel ================= */
+
+.sentinel {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 26px 0 6px;
+  color: var(--faint);
+  font-size: 13px;
+}
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+}
+
+/* ================= upload progress ================= */
+
+.upload-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+  margin-top: 10px;
+}
+.upload-bar i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--grad);
+  transition: width 0.18s ease-out;
+}
+
+/* ================= description + capture date editors ================= */
+
+.about {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 18px 0;
+}
+.about:empty { display: none; }
+
+.about-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-width: 70ch;
+}
+
+.about-form { display: flex; flex-direction: column; gap: 10px; }
+.about-form textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 68px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 9px 11px;
+}
+.about-form textarea:focus,
+.about-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.about-inline { padding: 0 18px 4px; }
+.about-inline .field { max-width: 260px; }
+
+.about-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* A text button for a secondary action, so it does not compete with the
+   primary buttons in the footer below it. */
+.link-btn {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  color: #c3b9ff;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link-btn:hover { color: var(--text); }
+.link-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+
+/* ------------------------------------------------------------------ *
+ * Share viewer (share.html)
+ *
+ * A standalone page, not part of the shell: no sidebar, no auth gate. It
+ * borrows the same tokens so a link recipient still lands somewhere that
+ * looks like FlixDrive.
+ * ------------------------------------------------------------------ */
+
+.share-body { background: var(--bg); }
+
+.share-page {
+  min-height: 100vh;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.share-stage {
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  /* Tall portrait photos would otherwise push the title off the screen. */
+  max-height: 72vh;
+}
+
+.share-stage video,
+.share-stage img {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  background: #000;
+}
+
+.share-meta { display: flex; flex-direction: column; gap: 7px; }
+.share-meta h1 { font-size: 25px; }
+
+.share-description {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+  max-width: 68ch;
+  white-space: pre-wrap;
+}
+
+.share-foot {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .share-page { padding: 18px 14px 48px; gap: 16px; }
+  .share-stage { border-radius: var(--r-md); }
+  .share-meta h1 { font-size: 20px; }
+}

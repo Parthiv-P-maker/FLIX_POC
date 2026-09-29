@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shared on FlixDrive</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="share-body">
+    <!--
+      Deliberately not the SPA. A link recipient has no account, so app.js -
+      which opens by checking a token and showing the auth gate - is exactly
+      the wrong thing to serve them. This page talks only to /api/share.
+    -->
+    <main class="share-page">
+      <header class="share-head">
+        <span class="logo">
+          <span class="logo-mark">FD</span>
+          <span class="logo-text">FlixDrive</span>
+        </span>
+        <span class="pill">Shared with you</span>
+      </header>
+
+      <section class="share-stage" id="stage" hidden>
+        <video id="share-video" controls playsinline preload="metadata" hidden></video>
+        <img id="share-image" alt="" hidden />
+      </section>
+
+      <section class="share-meta" id="meta" hidden>
+        <h1 id="share-title"></h1>
+        <p class="hero-meta" id="share-sub"></p>
+        <p class="share-description" id="share-description" hidden></p>
+      </section>
+
+      <section class="empty" id="share-error" hidden>
+        <div class="empty-ico">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 3a1.4 1.4 0 0 1 1.4 1.5l-.4 6.2a1 1 0 0 1-2 0l-.4-6.2A1.4 1.4 0 0 1 12 5m0 12.8a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8" />
+          </svg>
+        </div>
+        <h3 id="share-error-title">This link is not valid</h3>
+        <p id="share-error-body">
+          It may have been revoked by its owner, or the address may be incomplete.
+        </p>
+      </section>
+
+      <footer class="share-foot" id="share-foot" hidden>
+        <a class="btn btn-soft" href="/">Open FlixDrive</a>
+      </footer>
+    </main>
+
+    <script src="/share.js"></script>
+  </body>
+</html>

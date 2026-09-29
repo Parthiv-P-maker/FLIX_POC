@@ -23,8 +23,13 @@ async function loadViewableAsset(req, { requireReady = true } = {}) {
   const asset = await MediaAsset.findById(req.params.id);
   if (!asset) throw httpError(404, 'Asset not found');
 
+  // Only 'public' is readable by id. 'unlisted' deliberately is not: its whole
+  // contract is "reachable by link", and the id is not the link - ObjectIds
+  // are semi-predictable, so honouring a bare id here would quietly downgrade
+  // every unlisted asset to "findable by anyone with an account". Holders of
+  // the slug come in through routes/share.routes.js instead.
   const isOwner = String(asset.ownerId) === String(req.user._id);
-  if (!isOwner && asset.visibility === 'private') {
+  if (!isOwner && asset.visibility !== 'public') {
     throw httpError(403, 'You do not have access to this asset');
   }
   if (requireReady && asset.status !== 'ready') {
