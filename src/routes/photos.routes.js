@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { uploadPhotos } = require('../middleware/upload');
 const { enqueue } = require('../services/mediaProcessor');
 const asyncHandler = require('../utils/asyncHandler');
+const { textField } = require('../utils/formField');
 
 const router = express.Router();
 router.use(requireAuth());
@@ -30,7 +31,7 @@ router.post(
 
     // One title for a batch would be meaningless, so each photo falls back to
     // its own filename unless the client sent exactly one.
-    const singleTitle = files.length === 1 ? (req.body.title || '').trim() : '';
+    const singleTitle = files.length === 1 ? textField(req.body.title).trim() : '';
 
     // A client holding the OS photo library knows the capture date even when
     // EXIF has been stripped. Parallel array to `photos`, so index i belongs
@@ -41,7 +42,7 @@ router.post(
       return supplied[i] && !Number.isNaN(d.getTime()) ? d : null;
     };
 
-    const shared = req.body.visibility === 'public';
+    const shared = textField(req.body.visibility) === 'public';
 
     const created = await MediaAsset.insertMany(
       files.map((file, i) => ({
@@ -55,7 +56,7 @@ router.post(
         ownerId: req.user._id,
         kind: 'photo',
         title: (singleTitle || file.originalname).slice(0, 200),
-        description: (req.body.description || '').slice(0, 2000),
+        description: textField(req.body.description).slice(0, 2000),
         storageKey: file.filename,
         originalFilename: file.originalname,
         mimeType: file.mimetype,

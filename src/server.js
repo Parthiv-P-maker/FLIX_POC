@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const mongoose = require('mongoose');
 const morgan = require('morgan');
 
 const connectDB = require('./config/db');
@@ -99,6 +100,22 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
+/**
+ * A rejection nobody caught is a bug, and the default is to print a warning
+ * and carry on in an unknown state. Log it loudly and keep serving: this is a
+ * media server, and killing an in-flight stream over an unrelated bug is worse
+ * than continuing. An uncaught *exception* is different - the process is not
+ * safe to continue after one, so it exits and lets the supervisor restart it.
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaught exception, shutting down:', err);
+  process.exit(1);
+});
+
 connectDB()
   .then(async () => {
     // The worker queue lives in memory, so anything mid-flight when the
@@ -110,7 +127,37 @@ connectDB()
       console.log(`[server] re-queued ${recovered} asset(s) interrupted by the last shutdown`);
     }
 
-    app.listen(PORT, () => console.log(`[server] listening on http://localhost:${PORT}`));
+    const server = app.listen(PORT, () =>
+      console.log(`[server] listening on http://localhost:${PORT}`)
+    );
+
+    /**
+     * Stop accepting connections, let in-flight requests finish, then close
+     * the database. Without this a deploy or a Ctrl-C cuts active range
+     * streams mid-chunk and leaves mongoose connections for the driver to
+     * time out.
+     *
+     * The timer is the backstop: a client holding a long download would
+     * otherwise keep the process alive indefinitely. unref() so it cannot by
+     * itself be the reason we stay running.
+     */
+    const shutdown = (signal) => {
+      console.log(`[server] ${signal} received, closing down`);
+
+      const force = setTimeout(() => {
+        console.error('[server] forced exit: connections did not drain in 10s');
+        process.exit(1);
+      }, 10_000);
+      force.unref();
+
+      server.close(async () => {
+        await mongoose.connection.close().catch(() => {});
+        console.log('[server] closed cleanly');
+        process.exit(0);
+      });
+    };
+
+    ['SIGTERM', 'SIGINT'].forEach((sig) => process.on(sig, () => shutdown(sig)));
   })
   .catch((err) => {
     console.error('[server] failed to start:', err.message);

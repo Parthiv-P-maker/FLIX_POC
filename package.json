@@ -8,7 +8,9 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed": "node testmedia/seed.js",
-    "test:e2e": "node testmedia/e2e.js"
+    "test": "node testmedia/run-tests.js",
+    "test:e2e": "node testmedia/e2e.js",
+    "lint": "eslint ."
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

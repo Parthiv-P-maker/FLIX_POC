@@ -7,6 +7,12 @@ let token = localStorage.getItem(TOKEN_KEY);
 let currentUser = null;
 let pollTimer = null;
 
+// Deliberately not persisted. The session token has to survive a reload; this
+// one is cheap to re-request and there is no reason to leave it lying in
+// localStorage where a stray script could read it.
+let mediaToken = null;
+let mediaTokenTimer = null;
+
 /* ------------------------------------------------------------------ *
  * API
  * ------------------------------------------------------------------ */
@@ -83,9 +89,35 @@ function upload(path, formData, onProgress) {
   });
 }
 
+/**
+ * Swap the session token for a short-lived, media-only one.
+ *
+ * The server refuses a session token in a query string now, so nothing with a
+ * <video> or <img> src works until this has run. Re-requested well inside the
+ * token's lifetime so a long viewing session never hits an expiry mid-scrub.
+ */
+async function refreshMediaToken() {
+  try {
+    const { token: fresh } = await api('/api/auth/media-token');
+    mediaToken = fresh;
+  } catch {
+    // Leave the old one in place; it may still be valid, and the next
+    // scheduled refresh will try again.
+  }
+  return mediaToken;
+}
+
+function startMediaTokenRefresh() {
+  clearInterval(mediaTokenTimer);
+  // Well under the two-hour default, so a tab left open overnight keeps
+  // working rather than quietly showing broken thumbnails.
+  mediaTokenTimer = setInterval(() => { refreshMediaToken(); }, 45 * 60 * 1000);
+}
+
 // <video src> and <img src> cannot carry an Authorization header, so the
-// stream and poster routes take the token in the query string instead.
-const withToken = (url) => `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+// stream and poster routes take a media token in the query string instead.
+const withToken = (url) =>
+  `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(mediaToken || '')}`;
 
 // Posters are authorised now, not static, so every <img src> needs the token.
 // Null-safe because an asset still being processed has no poster yet.
@@ -184,6 +216,8 @@ $('#auth-form').addEventListener('submit', async (e) => {
 function signOut() {
   token = null;
   currentUser = null;
+  mediaToken = null;
+  clearInterval(mediaTokenTimer);
   clearTimeout(pollTimer);
   localStorage.removeItem(TOKEN_KEY);
   closePlayer();
@@ -212,6 +246,12 @@ async function enterApp(user) {
   $('#auth-screen').hidden = true;
   $('#app').hidden = false;
   showView('watch');
+
+  // Before anything renders: every poster and every stream URL needs this, and
+  // tiles built without it would all 401.
+  await refreshMediaToken();
+  startMediaTokenRefresh();
+
   await Promise.all([loadLibrary(), loadCatalog(), loadPhotos(), loadProfile()]);
 }
 
@@ -696,9 +736,16 @@ async function openPlayer(asset) {
 
   // Resume where we left off, but not if the viewer was essentially at the
   // start or right at the end - both would feel broken.
+  //
+  // The media token is refreshed alongside it: a tile rendered an hour ago
+  // carries an hour-old token, and a film is long enough that starting one on
+  // a nearly-expired token would stall partway through.
   let resumeAt = 0;
   try {
-    const p = await api(`/api/progress/${asset.id}`);
+    const [p] = await Promise.all([
+      api(`/api/progress/${asset.id}`),
+      refreshMediaToken(),
+    ]);
     if (!p.completed && p.positionSec > 5) resumeAt = p.positionSec;
   } catch { /* a missing progress row is not an error */ }
 
@@ -730,11 +777,15 @@ function closePlayer() {
     playerAbort = null;
   }
 
+  // Send first, then clear, then pause. pause() fires the 'pause' handler
+  // synchronously, which called sendProgress again while playingAsset was
+  // still set - two PUTs for every close, writing the same position twice.
   if (playingAsset && video.currentTime > 0) sendProgress(true);
+  playingAsset = null;
+
   video.pause();
   video.removeAttribute('src');
   video.load();
-  playingAsset = null;
   $('#player-overlay').hidden = true;
 }
 
@@ -1035,6 +1086,12 @@ async function loadPhotos({ append = false } = {}) {
     // Always a full re-render, even when appending: the justified solver packs
     // rows greedily, so new photos change where the *existing* rows break.
     renderTimeline();
+
+    // Photos were the one path that never armed the poll. Uploading twenty and
+    // then reloading left the timeline on placeholders until the user thought
+    // to refresh again, because only loadLibrary (videos) and the upload
+    // handler ever called this.
+    schedulePollIfProcessing(photoGroups.flatMap((g) => g.items));
 
     const { years, favorites } = data.facets;
     paintYearChips(years);

@@ -7,6 +7,7 @@ const { requireAuth } = require('../middleware/auth');
 const { uploadVideo } = require('../middleware/upload');
 const { enqueue } = require('../services/mediaProcessor');
 const asyncHandler = require('../utils/asyncHandler');
+const { textField } = require('../utils/formField');
 const { POSTER_DIR, sourcePathFor } = require('../config/paths');
 
 const router = express.Router();
@@ -27,14 +28,14 @@ router.post(
 
     const asset = await MediaAsset.create({
       ownerId: req.user._id,
-      title: (req.body.title || req.file.originalname).trim().slice(0, 200),
-      description: (req.body.description || '').slice(0, 2000),
+      title: (textField(req.body.title) || req.file.originalname).trim().slice(0, 200),
+      description: textField(req.body.description).slice(0, 2000),
       kind: 'video',
       storageKey: req.file.filename,
       originalFilename: req.file.originalname,
       mimeType: req.file.mimetype,
       sizeBytes: req.file.size,
-      visibility: req.body.visibility === 'public' ? 'public' : 'private',
+      visibility: textField(req.body.visibility) === 'public' ? 'public' : 'private',
       status: 'processing',
     });
 
@@ -219,9 +220,16 @@ router.post(
     }
 
     // $inc rather than load-modify-save so two viewers starting at once do
-    // not overwrite each other's increment.
-    await MediaAsset.updateOne({ _id: asset._id }, { $inc: { viewCount: 1 } });
-    res.json({ ok: true, viewCount: asset.viewCount + 1 });
+    // not overwrite each other's increment - and `new: true` so the number we
+    // report is the one the database actually holds. Computing it as
+    // `asset.viewCount + 1` from the pre-increment read threw that atomicity
+    // away again the moment two viewers overlapped.
+    const updated = await MediaAsset.findOneAndUpdate(
+      { _id: asset._id },
+      { $inc: { viewCount: 1 } },
+      { new: true }
+    );
+    res.json({ ok: true, viewCount: updated.viewCount });
   })
 );
 

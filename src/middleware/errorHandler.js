@@ -44,8 +44,16 @@ module.exports = function errorHandler(err, req, res, next) {
 
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      const maxMb = Number(process.env.MAX_UPLOAD_MB || 2048);
-      return res.status(413).json({ error: `File is larger than the ${maxMb} MB limit` });
+      // The limit depends on which upload tripped it. Reading MAX_UPLOAD_MB
+      // unconditionally told someone with a 30 MB photo that they had exceeded
+      // "the 2048 MB limit" - wrong, and impossible to act on. err.field is
+      // already 'video' or 'photos'.
+      const isPhoto = err.field === 'photos';
+      const maxMb = Number(
+        isPhoto ? process.env.MAX_PHOTO_MB || 25 : process.env.MAX_UPLOAD_MB || 2048
+      );
+      const noun = isPhoto ? 'Each photo' : 'The video';
+      return res.status(413).json({ error: `${noun} must be under ${maxMb} MB` });
     }
     // upload.js signals a rejected MIME type with this code, so the message
     // has to cover both that and a genuinely misnamed form field.

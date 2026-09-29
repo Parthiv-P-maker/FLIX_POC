@@ -7,3 +7,8 @@ storage/
 testmedia/*.mp4
 testmedia/*.jpg
 testmedia/*.png
+
+# Scratch output from ad-hoc audits; regenerate rather than commit.
+app_ids.txt
+html_ids.txt
+index_response.html

@@ -35,6 +35,18 @@ function filePart(p, type) {
   return new File([fs.readFileSync(p)], path.basename(p), { type });
 }
 
+/**
+ * Media URLs take a short-lived, media-purpose token - never the session one.
+ * See src/middleware/auth.js for why the two are kept apart.
+ */
+async function fetchMediaToken(sessionToken) {
+  const res = await fetch(`${BASE}/api/auth/media-token`, {
+    headers: { Authorization: `Bearer ${sessionToken}` },
+  });
+  const body = await res.json();
+  return body.token;
+}
+
 async function pollUntilReady(id, token, tries = 40) {
   for (let i = 0; i < tries; i += 1) {
     const { body } = await json(`/api/assets/${id}`, {
@@ -62,6 +74,7 @@ async function pollUntilReady(id, token, tries = 40) {
   console.log('\nauth');
   const email = `e2e-${Date.now()}@test.local`;
   let token;
+  let mediaToken;
   {
     const { res, body } = await json('/api/auth/register', {
       method: 'POST',
@@ -71,6 +84,7 @@ async function pollUntilReady(id, token, tries = 40) {
     check('register returns 201 + token', res.status === 201 && !!body.token);
     check('password hash is not echoed back', !JSON.stringify(body).includes('passwordHash'));
     token = body.token;
+    mediaToken = await fetchMediaToken(token);
   }
   const auth = { Authorization: `Bearer ${token}` };
 
@@ -103,6 +117,27 @@ async function pollUntilReady(id, token, tries = 40) {
     check('unauthenticated library returns 401', res.status === 401);
   }
 
+  // ---- session vs media tokens ------------------------------------------
+  // The two must not be interchangeable, or the split buys nothing: a media
+  // token accepted in a header is just a session token with a shorter life,
+  // and a session token accepted in a URL is the leak this exists to prevent.
+  console.log('\ntoken separation');
+  {
+    check('a media token is issued on request', typeof mediaToken === 'string' && mediaToken.length > 20);
+    check('it is not the session token', mediaToken !== token);
+
+    const { res: headerRes } = await json('/api/assets', {
+      headers: { Authorization: `Bearer ${mediaToken}` },
+    });
+    check('a media token is refused in a header', headerRes.status === 401, `got ${headerRes.status}`);
+
+    const urlRes = await fetch(`${BASE}/api/stream/${'0'.repeat(24)}?token=${token}`);
+    check('a session token is refused in a URL', urlRes.status === 401, `got ${urlRes.status}`);
+
+    const { res: noAuth } = await json('/api/auth/media-token');
+    check('minting one needs a session', noAuth.status === 401, `got ${noAuth.status}`);
+  }
+
   // ---- video upload + processing -------------------------------------
   console.log('\nvideo upload');
   let assetId;
@@ -129,7 +164,7 @@ async function pollUntilReady(id, token, tries = 40) {
   check('poster was generated', !!(asset && asset.posterUrl));
 
   if (asset && asset.posterUrl) {
-    const res = await fetch(`${asset.posterUrl}?token=${token}`);
+    const res = await fetch(`${asset.posterUrl}?token=${mediaToken}`);
     check('poster served through the auth route',
       res.status === 200 && res.headers.get('content-type').startsWith('image/'));
     check('poster is not publicly cacheable',
@@ -150,7 +185,7 @@ async function pollUntilReady(id, token, tries = 40) {
   // ---- range streaming (the critical one) -----------------------------
   console.log('\nrange streaming');
   {
-    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${token}`, {
+    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${mediaToken}`, {
       headers: { Range: 'bytes=0-1023' },
     });
     const cr = res.headers.get('content-range');
@@ -162,14 +197,14 @@ async function pollUntilReady(id, token, tries = 40) {
     await res.arrayBuffer();
   }
   {
-    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${token}`);
+    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${mediaToken}`);
     check('rangeless request returns 200', res.status === 200);
     check('rangeless still advertises ranges', res.headers.get('accept-ranges') === 'bytes');
     await res.arrayBuffer();
   }
   {
     // Seeking past EOF must not crash createReadStream.
-    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${token}`, {
+    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${mediaToken}`, {
       headers: { Range: 'bytes=99999999-' },
     });
     check('out-of-range start returns 416', res.status === 416, `got ${res.status}`);
@@ -177,7 +212,7 @@ async function pollUntilReady(id, token, tries = 40) {
   {
     // Unsatisfiable per RFC 7233. This used to be clamped into "start to EOF",
     // which answers a question the client never asked.
-    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${token}`, {
+    const res = await fetch(`${BASE}/api/stream/${assetId}?token=${mediaToken}`, {
       headers: { Range: 'bytes=500-100' },
     });
     check('inverted range returns 416', res.status === 416, `got ${res.status}`);
@@ -259,7 +294,7 @@ async function pollUntilReady(id, token, tries = 40) {
     photos.every((p) => p && p.originalUrl && !p.streamUrl));
 
   if (photos[0]) {
-    const res = await fetch(`${photos[0].posterUrl}?token=${token}`);
+    const res = await fetch(`${photos[0].posterUrl}?token=${mediaToken}`);
     check('thumbnail served through the auth route', res.status === 200);
     await res.arrayBuffer();
 
@@ -267,7 +302,7 @@ async function pollUntilReady(id, token, tries = 40) {
     // so it has to be at least as protected as the original.
     const anon = await fetch(photos[0].posterUrl);
     check('thumbnail refuses an unauthenticated request', anon.status === 401, `got ${anon.status}`);
-    const full = await fetch(`${photos[0].originalUrl}?token=${token}`);
+    const full = await fetch(`${photos[0].originalUrl}?token=${mediaToken}`);
     check('full photo served through auth route', full.status === 200,
       full.headers.get('content-type'));
     await full.arrayBuffer();
@@ -467,6 +502,7 @@ async function pollUntilReady(id, token, tries = 40) {
   // Hoisted: the shared-catalog section below needs a second identity to
   // prove that sharing actually crosses the ownership boundary.
   let otherToken;
+  let otherMediaToken;
   let otherAuth;
   {
     const { body: other } = await json('/api/auth/register', {
@@ -479,16 +515,17 @@ async function pollUntilReady(id, token, tries = 40) {
       }),
     });
     otherToken = other.token;
+    otherMediaToken = await fetchMediaToken(otherToken);
     otherAuth = { Authorization: `Bearer ${otherToken}` };
 
     const { res: detail } = await json(`/api/assets/${assetId}`, { headers: otherAuth });
     check("another user cannot read a private asset", detail.status === 403, `got ${detail.status}`);
 
-    const stream = await fetch(`${BASE}/api/stream/${assetId}?token=${other.token}`);
+    const stream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherMediaToken}`);
     check("another user cannot stream it", stream.status === 403, `got ${stream.status}`);
 
     // The poster is derived from a private original, so it inherits its rules.
-    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${other.token}`);
+    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${otherMediaToken}`);
     check("another user cannot fetch its poster", poster.status === 403, `got ${poster.status}`);
 
     const { body: lib } = await json('/api/assets', { headers: otherAuth });
@@ -531,7 +568,7 @@ async function pollUntilReady(id, token, tries = 40) {
     const { res } = await json(`/api/assets/${assetId}`, { headers: otherAuth });
     check('another user can now read the detail', res.status === 200, `got ${res.status}`);
 
-    const stream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherToken}`, {
+    const stream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherMediaToken}`, {
       headers: { Range: 'bytes=0-1023' },
     });
     check('another user can range-stream it', stream.status === 206, `got ${stream.status}`);
@@ -540,7 +577,7 @@ async function pollUntilReady(id, token, tries = 40) {
     // Browse renders other people's posters, so authorising them must not have
     // broken the shared case - it is the reason the check is visibility-based
     // rather than owner-only.
-    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${otherToken}`);
+    const poster = await fetch(`${BASE}/api/posters/${assetId}?token=${otherMediaToken}`);
     check('another user can fetch a shared poster', poster.status === 200, `got ${poster.status}`);
     await poster.arrayBuffer();
   }
@@ -651,7 +688,7 @@ async function pollUntilReady(id, token, tries = 40) {
     const { res: byId } = await json(`/api/assets/${assetId}`, { headers: otherAuth });
     check('unlisted is not readable by id', byId.status === 403, `got ${byId.status}`);
 
-    const byIdStream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherToken}`);
+    const byIdStream = await fetch(`${BASE}/api/stream/${assetId}?token=${otherMediaToken}`);
     check('unlisted is not streamable by id', byIdStream.status === 403, `got ${byIdStream.status}`);
 
     const { body: cat } = await json('/api/catalog', { headers: otherAuth });
@@ -759,6 +796,57 @@ async function pollUntilReady(id, token, tries = 40) {
     });
     check('shared and visibility together are rejected', bothFlags.res.status === 400,
       `got ${bothFlags.res.status}`);
+  }
+
+  // ---- regressions for the last round of small bugs ----------------------
+  console.log('\nsmall-bug regressions');
+  {
+    // A multipart form may legitimately repeat a field name, so multer hands
+    // back an array - and .trim() on an array threw a 500.
+    const fd = new FormData();
+    fd.append('video', filePart(path.join(MEDIA, 'clip.mp4'), 'video/mp4'));
+    fd.append('title', 'first');
+    fd.append('title', 'second');
+    const { res, body } = await json('/api/assets', { method: 'POST', headers: auth, body: fd });
+    check('a duplicated form field no longer 500s', res.status === 202, `got ${res.status}`);
+    check('the last value of a repeated field wins',
+      body.asset && body.asset.title === 'second', body.asset && body.asset.title);
+
+    if (body.asset) {
+      await json(`/api/assets/${body.asset.id}`, { method: 'DELETE', headers: auth });
+    }
+  }
+  {
+    // The counter is $inc'd atomically; the response used to report a value
+    // computed from the pre-increment read.
+    const before = await json(`/api/assets/${assetId}`, { headers: auth });
+    const startCount = before.body.asset.viewCount;
+
+    const bumps = await Promise.all(
+      [0, 1, 2, 3, 4].map(() =>
+        json(`/api/assets/${assetId}/view`, { method: 'POST', headers: auth })
+      )
+    );
+    const reported = bumps.map((b) => b.body.viewCount).sort((a, z) => a - z);
+    const expected = [1, 2, 3, 4, 5].map((n) => startCount + n);
+
+    check('five concurrent view bumps report five distinct counts',
+      JSON.stringify(reported) === JSON.stringify(expected),
+      `got ${reported.join(',')} expected ${expected.join(',')}`);
+
+    const after = await json(`/api/assets/${assetId}`, { headers: auth });
+    check('the stored count matches what was reported',
+      after.body.asset.viewCount === startCount + 5, `${after.body.asset.viewCount}`);
+  }
+  {
+    // A photo over MAX_PHOTO_MB used to be told it exceeded the *video* limit.
+    // MAX_PHOTO_MB is 25 by default and the fixtures are far smaller, so drive
+    // the message itself rather than trying to build a 26 MB JPEG.
+    const fd = new FormData();
+    fd.append('photos', filePart(path.join(MEDIA, 'clip.mp4'), 'video/mp4'));
+    const { res, body } = await json('/api/photos', { method: 'POST', headers: auth, body: fd });
+    check('a non-image in the photos field is rejected', res.status === 400, `got ${res.status}`);
+    check('the rejection names the right field', /photos/.test(body.error || ''), body.error);
   }
 
   // ---- favourites + photo filters ---------------------------------------

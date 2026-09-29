@@ -1,7 +1,7 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
-const { signToken, requireAuth } = require('../middleware/auth');
+const { signToken, signMediaToken, requireAuth } = require('../middleware/auth');
 const asyncHandler = require('../utils/asyncHandler');
 
 const router = express.Router();
@@ -79,6 +79,22 @@ router.post(
 
 router.get('/me', requireAuth(), (req, res) => {
   res.json({ user: req.user.toPublic() });
+});
+
+/**
+ * GET /api/auth/media-token
+ *
+ * Exchanges the session token - sent as a header, as always - for a
+ * short-lived one the client can safely put in a <video> or <img> src. See
+ * middleware/auth.js for why the two are kept apart.
+ */
+router.get('/media-token', requireAuth(), (req, res) => {
+  res.json({
+    token: signMediaToken(req.user._id),
+    // So the client knows when to ask again rather than guessing, or worse,
+    // discovering the expiry through a broken image.
+    expiresIn: process.env.MEDIA_TOKEN_TTL || '2h',
+  });
 });
 
 module.exports = router;
