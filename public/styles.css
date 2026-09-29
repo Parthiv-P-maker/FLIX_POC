@@ -739,14 +739,17 @@ svg { fill: currentColor; }
   box-shadow: var(--shadow);
 }
 
+/* The player footer carries up to four things now - meta, Share, Copy link,
+   Delete - so it has to be allowed to wrap rather than squeezing them. */
 .modal-head, .modal-foot {
   display: flex; align-items: center; gap: 14px;
   padding: 13px 17px;
+  flex-wrap: wrap;
 }
 .modal-head { border-bottom: 1px solid var(--line); }
 .modal-foot { border-top: 1px solid var(--line); }
 .modal-head h3 { font-size: 15px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.modal-foot span { flex: 1; }
+.modal-foot > span { flex: 1 1 12ch; min-width: 0; }
 
 #player { width: 100%; max-height: 66vh; background: #000; display: block; }
 
@@ -793,6 +796,7 @@ svg { fill: currentColor; }
   .hero-art { min-height: 200px; }
   .hero-art::after { background: linear-gradient(0deg, var(--surface) 2%, transparent 55%); }
 }
+
 
 @media (max-width: 700px) {
   :root { --sidebar-w: 0px; }
@@ -1040,4 +1044,36 @@ svg { fill: currentColor; }
   .share-page { padding: 18px 14px 48px; gap: 16px; }
   .share-stage { border-radius: var(--r-md); }
   .share-meta h1 { font-size: 20px; }
+}
+
+/* ================= modals and touch on small screens =================
+ *
+ * Last in the file on purpose: these override the general 700px block above,
+ * and relying on source order is only safe if the order is obvious.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 700px) {
+  /* .modal becomes a full-height flex column at this width, so the dialog
+     itself has to scroll - otherwise a long description pushes the footer,
+     and with it Share and Delete, off the bottom of the screen. */
+  .modal-wide { overflow-y: auto; }
+  #player { max-height: 42vh; }
+  #photo-full { max-height: 52vh; }
+
+  .modal-head, .modal-foot { padding: 11px 13px; gap: 10px; }
+
+  /* Four controls - meta, Share, Copy link, Delete - do not fit one narrow
+     row. Give the meta its own line and let the buttons share the next. */
+  .modal-foot { align-items: stretch; }
+  .modal-foot > span { flex: 1 0 100%; }
+  .modal-foot .btn { flex: 1 1 auto; justify-content: center; }
+
+  .about { padding: 12px 13px 0; }
+  .about-inline { padding: 0 13px 4px; }
+  .about-inline .field { max-width: none; }
+  .about-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Touch has no hover, so a control that only appears on hover cannot be
+     reached at all. .cell-star already had this; .cell-trash needs it too. */
+  .cell-trash { opacity: 1; transform: scale(1); }
 }
