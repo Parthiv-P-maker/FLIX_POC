@@ -631,9 +631,15 @@ $('#player-link').addEventListener('click', async () => {
     let asset = playingAsset;
 
     if (!asset.shareUrl) {
+      // A private asset has to be promoted to 'unlisted' to be linkable. One
+      // that is already public must NOT be - that would pull it out of the
+      // catalog as a side effect of asking for a link. Re-sending its current
+      // visibility still saves the row, which is what mints the slug for an
+      // asset shared before share links existed.
+      const next = asset.visibility === 'private' ? 'unlisted' : asset.visibility;
       const res = await api(`/api/assets/${asset.id}`, {
         method: 'PATCH',
-        body: { visibility: 'unlisted' },
+        body: { visibility: next },
       });
       asset = { ...asset, ...res.asset };
       playingAsset = asset;

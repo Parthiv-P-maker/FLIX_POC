@@ -181,17 +181,22 @@ mediaAssetSchema.methods.toPublic = function (req) {
  * stops working rather than springing back to life on the next share.
  */
 mediaAssetSchema.pre('save', function (next) {
+  // Only restamped when visibility actually changes - an unrelated save, like
+  // a rename, must not shove the asset back to the top of the "New" rail.
   if (this.isModified('visibility') || this.isNew) {
-    const isPrivate = this.visibility === 'private';
-
-    this.sharedAt = isPrivate ? null : new Date();
-
-    if (isPrivate) {
-      this.shareSlug = null;
-    } else if (!this.shareSlug) {
-      this.shareSlug = crypto.randomBytes(16).toString('hex');
-    }
+    this.sharedAt = this.visibility === 'private' ? null : new Date();
   }
+
+  // The slug, by contrast, is reconciled on every save regardless of whether
+  // visibility changed. That is what heals a row shared before share links
+  // existed: it is already 'public' and will never change visibility again,
+  // so a guard on isModified would leave it without a slug forever.
+  if (this.visibility === 'private') {
+    this.shareSlug = null;
+  } else if (!this.shareSlug) {
+    this.shareSlug = crypto.randomBytes(16).toString('hex');
+  }
+
   next();
 });
 
