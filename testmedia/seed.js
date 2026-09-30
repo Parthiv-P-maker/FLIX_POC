@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { withCaptureDate } = require('./exif');
+const { ensureFixtures } = require('./fixtures');
 
 const BASE = process.env.BASE || 'http://localhost:5000';
 const MEDIA = __dirname;
@@ -43,6 +44,7 @@ function buildPhotos() {
 }
 
 async function main() {
+  ensureFixtures();
   buildPhotos();
 
   let res = await fetch(`${BASE}/api/auth/login`, {

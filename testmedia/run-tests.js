@@ -22,6 +22,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const mongoose = require('mongoose');
+const { ensureFixtures } = require('./fixtures');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -72,6 +73,10 @@ function run(command, args, env) {
 }
 
 async function main() {
+  // Gitignored, so a fresh clone or a CI run has to build them first.
+  const built = ensureFixtures();
+  if (built.length) console.log(`Built test fixtures: ${built.join(', ')}`);
+
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'flixdrive-test-'));
