@@ -25,10 +25,18 @@ const mongoose = require('mongoose');
 
 const ROOT = path.join(__dirname, '..');
 
+// Picks up TEST_MONGO_HOST from .env, which a Mongo with auth switched on
+// needs. The server child is handed its MONGO_URI explicitly below, so nothing
+// else in .env can point the suite at the dev database.
+require('dotenv').config({ path: path.join(ROOT, '.env') });
+
 // A name nothing else will pick, so a crashed run cannot collide with a live one.
 const DB_NAME = `flixdrive_test_${process.pid}_${Date.now()}`;
 const MONGO_HOST = process.env.TEST_MONGO_HOST || 'mongodb://127.0.0.1:27017';
-const MONGO_URI = `${MONGO_HOST}/${DB_NAME}`;
+// The database name goes before any query string, so a host carrying
+// credentials can keep its ?authSource=admin.
+const [HOST_BASE, HOST_QUERY] = MONGO_HOST.split('?');
+const MONGO_URI = `${HOST_BASE.replace(/\/+$/, '')}/${DB_NAME}${HOST_QUERY ? `?${HOST_QUERY}` : ''}`;
 
 /** Ask the OS for a free port rather than guessing one and racing for it. */
 function freePort() {
