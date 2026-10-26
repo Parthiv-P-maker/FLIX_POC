@@ -1,0 +1,11 @@
+# Caddy fetches and renews a Let's Encrypt certificate for $DOMAIN by itself,
+# as long as the domain's DNS points at this server and ports 80/443 are open.
+{$DOMAIN} {
+	encode gzip
+
+	# Caddy has no body-size cap by default, so 2 GB uploads pass through.
+	# Streaming responses are flushed immediately so seeking stays responsive.
+	reverse_proxy app:5000 {
+		flush_interval -1
+	}
+}

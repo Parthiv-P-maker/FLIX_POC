@@ -14,3 +14,9 @@ testmedia/*.png
 app_ids.txt
 html_ids.txt
 index_response.html
+
+# React client build output; `npm run build` regenerates it.
+client/dist/
+
+# Local Claude Code preview config; machine-specific.
+.claude/launch.json

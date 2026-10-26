@@ -1,0 +1,49 @@
+# App + MongoDB + Caddy (automatic HTTPS). See DEPLOY.md.
+#
+#   docker compose up -d --build
+#
+# Needs a .env next to this file with at least JWT_SECRET and DOMAIN.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Overrides whatever .env says, so a local MONGO_URI cannot leak in.
+      # To use Atlas instead, delete this line and the mongo service.
+      MONGO_URI: mongodb://mongo:27017/flixdrive
+      # Caddy is the one proxy hop in front of the app.
+      TRUST_PROXY: '1'
+      PUBLIC_URL: https://${DOMAIN:?set DOMAIN in .env}
+      CLIENT_ORIGIN: https://${DOMAIN}
+    volumes:
+      - app-data:/data
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # No ports: only the app can reach it, over the compose network.
+    volumes:
+      - mongo-data:/data/db
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - app
+
+volumes:
+  app-data:
+  mongo-data:
+  caddy-data:

@@ -1,0 +1,73 @@
+﻿# Main project file summary
+
+Detailed descriptions of project-owned files: what each contributes and how it works. Excludes node_modules, .model-cache, storage, and .git. Secret values are not reproduced.
+
+- `.env` — Local runtime configuration and secrets read by dotenv. Contains environment-specific database, token, mail, storage, and feature settings; values are intentionally omitted.
+- `.env.example` — Starter template listing supported environment variables. Copy to .env and customize local database, security, storage, email, and optional machine-learning settings.
+- `.github\workflows\ci.yml` — GitHub Actions workflow for pushes and pull requests. It installs locked dependencies, starts MongoDB, runs ESLint, and runs the automated suite.
+- `.gitignore` — Excludes secrets, installed packages, generated model data, media, and other local artifacts from Git commits.
+- `app_ids.txt` — Manual reference list of application UI IDs, useful when locating elements referenced by the client.
+- `eslint.config.js` — ESLint configuration defining JavaScript parsing settings, globals, and lint rules used by npm run lint.
+- `FILE_SUMMARY.md` — This file. Indexes the main project files and describes their purpose and basic operation; excludes dependencies, caches, stored media, and Git internals.
+- `html_ids.txt` — Manual reference list of HTML IDs for finding DOM elements selected or updated by the browser code.
+- `index_response.html` — Saved HTML response snapshot for inspection/debugging; it is not part of the server's runtime logic.
+- `package.json` — Declares the private Node.js app, src/server.js entry point, npm scripts for run/seed/test/lint, and dependencies for HTTP, MongoDB, auth, media, and ML features.
+- `package-lock.json` — Locks the full npm dependency graph to exact versions so npm ci and automated builds reproduce installs consistently.
+- `public\app.js` — Main single-page browser client. Builds the Watch, Browse, Photos, Upload, and Profile interfaces; calls backend APIs; handles login state, upload progress, search, playback/resume, photo timeline/tag actions, sharing, dialogs, and navigation.
+- `public\icons\icon.svg` — Vector FlixDrive icon that remains crisp at different display sizes.
+- `public\icons\icon-192.png` — 192 px raster app icon used by browsers and install surfaces.
+- `public\icons\icon-512.png` — 512 px raster app icon for large launchers and install prompts.
+- `public\icons\icon-maskable-512.png` — 512 px maskable launcher icon with padding for operating-system shape cropping.
+- `public\index.html` — Main app shell: defines navigation and view containers, links the stylesheet and app script, and provides the DOM scaffolding that public/app.js populates.
+- `public\manifest.webmanifest` — PWA metadata for app name, launch URL, display style, colors, and icon choices used when installing the site.
+- `public\reset.html` — Standalone markup for the password-reset flow, providing fields and status elements used by reset.js.
+- `public\reset.js` — Reads the reset token from the URL, checks the new-password form, submits it to the API, and reports success or failure.
+- `public\share.html` — Standalone markup for a public media link so recipients can view shared content without the signed-in app shell.
+- `public\share.js` — Extracts the share key from the URL, fetches public share information, and renders media details/content or an error.
+- `public\styles.css` — Application visual system covering desktop and mobile layout, navigation, media cards, player controls, photo grids, forms, dialogs, upload status, and loading/empty/error states.
+- `public\sw.js` — Service worker that caches static app-shell resources for install/offline startup while keeping authenticated API data and user media out of the cache.
+- `README.md` — User/developer guide to features, setup, requirements, environment configuration, storage, architecture, ML photo tagging/search, and available npm commands.
+- `src\config\db.js` — Centralizes the Mongoose connection using the configured Mongo URI, allowing the server to connect once and report database startup failures.
+- `src\config\paths.js` — Defines storage root and media subdirectories and resolves the correct on-disk source path for an asset record.
+- `src\config\tagVocabulary.js` — Candidate text captions for zero-shot photo classification. The CLIP tagger compares each image embedding with these captions to produce tags that can be searched.
+- `src\middleware\assetAccess.js` — Common access policy for media resources. Checks owner, public catalog visibility, or valid sharing/media authorization so streams and images enforce consistent rules.
+- `src\middleware\auth.js` — Extracts and verifies bearer JWTs, loads the user, protects signed-in routes, and issues/validates short-lived media-purpose credentials distinct from normal sessions.
+- `src\middleware\errorHandler.js` — Central Express error boundary. Translates known validation/upload/application failures into safe HTTP responses and handles cleanup after failed operations.
+- `src\middleware\upload.js` — Configures Multer for disk-backed video and photo uploads, including allowed types, file size/count limits, target folders, and generated filenames.
+- `src\models\MediaAsset.js` — Shared Mongoose document for videos and photos. Stores owner, kind, title, visibility, source/derived filenames, processing state, technical metadata, photo date/tags, and indexes used by library and search queries.
+- `src\models\PasswordReset.js` — Mongoose model for password-reset tokens and expiry. The auth flow checks these records to accept valid reset links and reject expired ones.
+- `src\models\User.js` — Account schema containing unique login identity, password hash, and profile data. Auth routes use it for registration, login verification, and account updates.
+- `src\models\WatchProgress.js` — Per-user playback bookmark model containing the media reference and last position. Progress endpoints save it and the client uses it for resume and continue-watching.
+- `src\routes\assets.routes.js` — Authenticated video library routes. Accept uploads as queued assets, list and retrieve a user's videos, update supported metadata/visibility, and delete entries with file cleanup.
+- `src\routes\auth.routes.js` — Registration, login, logout, media-token, and password-reset endpoints. Validates input, hashes/verifies credentials, and creates signed tokens for sessions and media access.
+- `src\routes\catalog.routes.js` — Read-only shared catalog API. Selects public assets and applies search/sort/grouping options to supply Browse view sections.
+- `src\routes\photos.routes.js` — Authenticated photo API for batch upload and queued processing, date-based timeline/search results, tag/favorite operations, and photo deletion.
+- `src\routes\posters.routes.js` — Looks up an asset, applies shared access control, and returns its poster or preview image with appropriate content headers.
+- `src\routes\profile.routes.js` — Current-user profile API for account details and library statistics, plus supported edits such as display name or password.
+- `src\routes\progress.routes.js` — Authenticated read/write API for playback positions. The video player periodically saves its current time and fetches it to resume playback.
+- `src\routes\share.routes.js` — Creates and resolves unguessable public share links. Valid link recipients can retrieve shared media information without a normal login, subject to share authorization.
+- `src\routes\stream.routes.js` — Authorized video streaming endpoint. Validates Range requests and streams only the requested byte segment with partial-content response headers so browser seeking works.
+- `src\server.js` — Server entry point: loads environment, configures Express security/CORS/logging/body parsing, connects MongoDB, mounts API and static pages, starts processing services, and closes resources on shutdown.
+- `src\services\assetCleanup.js` — Shared deletion service that removes stored source and derived media files associated with a database asset, keeping cleanup consistent across routes.
+- `src\services\imageTagger.js` — Loads local Transformers.js CLIP when enabled, computes photo/text embeddings, compares them against vocabulary captions, queues tagging/backfill, and supports semantic similarity search alongside title/tag matching.
+- `src\services\mailer.js` — Encapsulates email transport and message creation for account flows such as password-reset links so routes do not contain delivery details.
+- `src\services\mediaProcessor.js` — Background processing queue for uploads. Runs ffprobe for dimensions/duration and ffmpeg for posters, thumbnails, and seek-preview sprites; updates metadata and ready/failed state, and recovers unfinished work after restart.
+- `src\utils\asyncHandler.js` — Wraps async Express handlers and forwards rejected promises to shared error middleware, avoiding repeated try/catch boilerplate.
+- `src\utils\formField.js` — Normalizes text values from multipart forms, which may arrive in different shapes, before route handlers validate and save them.
+- `src\utils\rangeStream.js` — Parses and bounds-checks a single HTTP byte range, calculates offsets, and opens a limited file stream for efficient seekable playback.
+- `testmedia\beach.jpg` — Sample generated beach image used to fill the seeded demo photo timeline.
+- `testmedia\city.jpg` — Sample generated city image used to fill the seeded demo photo timeline.
+- `testmedia\clip.mp4` — Short generated video with predictable dimensions, duration, and audio for upload, processing, and stream checks.
+- `testmedia\desert.jpg` — Sample generated desert image used in demo timeline data.
+- `testmedia\e2e.js` — HTTP end-to-end smoke script for an already-running server. Registers/logs in, uploads fixtures, waits for processing, and checks API/access/playback behavior; BASE overrides the server URL.
+- `testmedia\exif.js` — Constructs a standards-shaped JPEG EXIF segment containing DateTimeOriginal and inserts it into a JPEG. This lets tests verify camera-date extraction rather than only upload-time fallback.
+- `testmedia\fixtures.js` — Generates missing deterministic video/JPEG/PNG fixtures through bundled ffmpeg and exports their path for test and demo scripts.
+- `testmedia\forest.jpg` — Generated forest-named fixture used in sample content and optional image-tagging checks.
+- `testmedia\lake.jpg` — Generated lake-named image fixture for the photo demo and date-spread scenarios.
+- `testmedia\migrate-db-name.js` — One-off migration helper that copies collections from the previous database name to the FlixDrive database while leaving the original as a backup and skipping empty disposable accounts.
+- `testmedia\ml-check.js` — Optional ML diagnostic that loads the tagger and checks embeddings and image/text similarity behavior; reports a skip when ML_ENABLED is false.
+- `testmedia\photo1.jpg` — Generated JPEG with known size/dimensions for photo upload and processing tests.
+- `testmedia\photo2.png` — Generated transparent PNG used to exercise alpha-channel image and thumbnail handling.
+- `testmedia\ridge.jpg` — Generated ridge-named image fixture used by the demo seed for a dated timeline entry.
+- `testmedia\run-tests.js` — Owns automated test setup and teardown: creates an isolated Mongo database, temporary storage and free port, launches the server, runs HTTP checks, then cleans up even on failure.
+- `testmedia\seed.js` — Seeds a running local server with demo login, a sample video, and generated photos carrying varied EXIF dates so library and timeline views have content.
