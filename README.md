@@ -27,7 +27,7 @@ macOS, and a grader's machine without a PATH difference.
 ```bash
 npm install
 cp .env.example .env        # then edit JWT_SECRET
-npm run dev
+npm run dev 
 ```
 
 Then open <http://localhost:5000> — the client is served from the same origin
