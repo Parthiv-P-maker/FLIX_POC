@@ -343,7 +343,9 @@ nothing would be worse. Wiring up nodemailer is a change to that one file.
 
 ## Hosting a demo
 
-Enough to put it online for a demo, not a production setup:
+Step-by-step instructions, including the Docker + HTTPS setup, are in
+[DEPLOY.md](DEPLOY.md). In short, enough to put it online for a demo, not a
+production setup:
 
 - **Database:** a free MongoDB Atlas cluster; put its connection string in
   `MONGO_URI`.

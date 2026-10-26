@@ -4,6 +4,9 @@
   "private": true,
   "description": "FlixDrive - personal media library: auth, upload, media processing, range-request playback, photo timeline",
   "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
