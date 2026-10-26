@@ -27,12 +27,24 @@ macOS, and a grader's machine without a PATH difference.
 ```bash
 npm install
 cp .env.example .env        # then edit JWT_SECRET
+npm run build               # builds the React client into client/dist
 npm run dev
 ```
 
 Then open <http://localhost:5000> — the client is served from the same origin
 as the API. Register an account, upload a video, and it appears under **Watch**
 once the worker finishes.
+
+The web client is React + Vite in `client/`. To work on it with hot reload,
+run the server (`npm run dev`) and, in a second terminal, `npm run dev:client`,
+then open <http://localhost:5173>; Vite proxies `/api` to the server. Until
+`client/dist` has been built, the server falls back to the older no-build
+client in `public/`.
+
+The design is "neo-soft HUD": neumorphic surfaces (raised and inset soft
+shadows on one base colour) with a neon cyan-to-violet accent, mono HUD labels
+and a faint grid backdrop. Dark and light themes share one set of tokens in
+`client/src/styles/theme.css`; switch from the sidebar, Profile or the palette.
 
 Five views: **Watch** (hero + continue-watching + your library), **Browse**
 (the shared catalog — trending, new, and other members' uploads, with search),
@@ -104,7 +116,16 @@ src/
     rangeStream.js        Range parsing + safe piping, shared by both routes
     asyncHandler.js       routes async rejections into next()
     formField.js          reads a multipart text field that may be an array
-public/
+client/                   React + Vite web client (builds to client/dist)
+  index.html share.html reset.html   the three entry pages
+  src/store.jsx           session, current view, upload tray, refresh signals
+  src/views/              Watch, Browse, Photos, Upload, Profile, AuthScreen
+  src/player/             video player with custom controls
+  src/photos/             justified layout + lightbox
+  src/components/         sidebar, tiles, command palette, tray, toast
+  src/styles/             theme.css (design tokens, primitives), app.css
+  public/                 sw.js, manifest, icons (copied as-is)
+public/                   legacy no-build client, served only if client/dist is missing
   index.html app.js       the SPA
   share.html share.js     standalone viewer for a share link (no account)
   reset.html reset.js     standalone password reset page

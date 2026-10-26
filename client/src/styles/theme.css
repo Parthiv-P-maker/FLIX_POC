@@ -1,0 +1,480 @@
+/* =====================================================================
+ * FlixDrive design system: "neo-soft HUD"
+ *
+ * Neumorphism supplies the material - every surface is the same colour as
+ * the page, and depth comes only from a light shadow on the top-left and a
+ * dark one on the bottom-right. Raised things you can press; inset things
+ * hold values (fields, tracks, the active tab). The futuristic layer sits on
+ * top: one neon gradient used sparingly for state and focus, mono HUD labels,
+ * and a faint grid with glow behind everything.
+ * ===================================================================== */
+
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #161922;
+  --bg-deep: #10121a;
+  --surface: #181b25;
+  --text: #e8ecf6;
+  --text-2: #a3abbf;
+  --muted: #6f7890;
+
+  --sh-dark: rgba(4, 5, 10, 0.72);
+  --sh-light: rgba(255, 255, 255, 0.045);
+  --edge: rgba(255, 255, 255, 0.05);
+
+  --accent: #3ef3ff;
+  --accent-2: #9d6bff;
+  --accent-3: #ff4fd8;
+  --accent-ink: #061018;
+  --ok: #3dffa8;
+  --warn: #ffc24b;
+  --danger: #ff5c7a;
+
+  --glow: 0 0 24px rgba(62, 243, 255, 0.28);
+  --glow-strong: 0 0 32px rgba(62, 243, 255, 0.45), 0 0 64px rgba(157, 107, 255, 0.25);
+  --grid-line: rgba(120, 140, 255, 0.045);
+  --overlay: rgba(6, 7, 12, 0.72);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #e4e9f2;
+  --bg-deep: #d8dfeb;
+  --surface: #e6ebf4;
+  --text: #1d2333;
+  --text-2: #4a5470;
+  --muted: #7a849c;
+
+  --sh-dark: rgba(150, 164, 190, 0.6);
+  --sh-light: rgba(255, 255, 255, 0.95);
+  --edge: rgba(255, 255, 255, 0.6);
+
+  --accent: #00a9c4;
+  --accent-2: #7347ff;
+  --accent-3: #e0309f;
+  --accent-ink: #ffffff;
+  --ok: #0f9d63;
+  --warn: #b77900;
+  --danger: #d63355;
+
+  --glow: 0 0 22px rgba(0, 169, 196, 0.22);
+  --glow-strong: 0 0 28px rgba(0, 169, 196, 0.32), 0 0 56px rgba(115, 71, 255, 0.18);
+  --grid-line: rgba(70, 90, 160, 0.06);
+  --overlay: rgba(200, 208, 224, 0.7);
+}
+
+:root {
+  --grad: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  --grad-hot: linear-gradient(135deg, var(--accent-2) 0%, var(--accent-3) 100%);
+
+  /* The neumorphic shadow scale. */
+  --raise-xs: 2px 2px 5px var(--sh-dark), -2px -2px 5px var(--sh-light);
+  --raise-sm: 4px 4px 10px var(--sh-dark), -4px -4px 10px var(--sh-light);
+  --raise: 8px 8px 20px var(--sh-dark), -7px -7px 18px var(--sh-light);
+  --raise-lg: 16px 16px 40px var(--sh-dark), -12px -12px 32px var(--sh-light);
+  --inset-sm: inset 3px 3px 7px var(--sh-dark), inset -3px -3px 7px var(--sh-light);
+  --inset: inset 6px 6px 14px var(--sh-dark), inset -5px -5px 12px var(--sh-light);
+
+  --r-xs: 8px;
+  --r-sm: 12px;
+  --r: 18px;
+  --r-lg: 26px;
+  --r-pill: 999px;
+
+  --font: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Space Grotesk Variable', var(--font);
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --sidebar-w: 264px;
+  --gutter: clamp(16px, 3.2vw, 40px);
+}
+
+/* ---------------------------------------------------------------- base */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* The HUD backdrop: a fine grid that fades out toward the edges, with two
+   slow-drifting colour fields behind it. Fixed, so it never scrolls. */
+body::before,
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+body::before {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at 50% 30%, #000 20%, transparent 75%);
+}
+body::after {
+  background:
+    radial-gradient(600px 400px at 85% -5%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 70%),
+    radial-gradient(520px 380px at 10% 105%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%);
+  animation: drift 24s ease-in-out infinite alternate;
+}
+@keyframes drift {
+  to { transform: translate3d(-2%, 2%, 0) scale(1.06); }
+}
+
+#root { position: relative; z-index: 1; }
+
+h1, h2, h3, h4 { font-family: var(--font-display); margin: 0; letter-spacing: -0.01em; }
+p { margin: 0; }
+img { display: block; max-width: 100%; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+[hidden] { display: none !important; }
+
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.ico { width: 1.25em; height: 1.25em; fill: currentColor; flex: none; }
+
+/* A small uppercase HUD label: section kickers, stat captions. */
+.hud {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.grad-text {
+  background: var(--grad);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.muted { color: var(--text-2); }
+.muted-sm { color: var(--muted); font-size: 13px; }
+
+/* ----------------------------------------------------------- surfaces */
+
+.neu {
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--raise);
+  border: 1px solid var(--edge);
+}
+.neu-inset {
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--inset);
+}
+
+/* ------------------------------------------------------------ buttons */
+
+.btn {
+  --btn-shadow: var(--raise-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  box-shadow: var(--btn-shadow);
+  transition: box-shadow 0.25s var(--ease), transform 0.15s var(--ease), color 0.2s, background 0.2s;
+  white-space: nowrap;
+  user-select: none;
+}
+.btn:hover:not(:disabled) { color: var(--accent); }
+.btn:active:not(:disabled) { box-shadow: var(--inset-sm); transform: scale(0.985); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-primary {
+  border-color: transparent;
+  background: var(--grad);
+  color: var(--accent-ink);
+  box-shadow: var(--raise-sm), var(--glow);
+}
+.btn-primary:hover:not(:disabled) { color: var(--accent-ink); box-shadow: var(--raise-sm), var(--glow-strong); }
+.btn-primary:active:not(:disabled) { box-shadow: inset 3px 3px 8px rgba(0, 0, 0, 0.35), var(--glow); }
+
+.btn-danger { color: var(--danger); }
+.btn-danger:hover:not(:disabled) { color: var(--danger); box-shadow: var(--raise-sm), 0 0 18px color-mix(in srgb, var(--danger) 35%, transparent); }
+
+.btn.is-on { color: var(--accent); box-shadow: var(--inset-sm); }
+
+.btn-lg { min-height: 50px; font-size: 15px; padding: 0 24px; border-radius: var(--r); }
+.btn-sm { min-height: 34px; padding: 0 12px; font-size: 13px; }
+.btn-block { width: 100%; }
+
+.icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--text-2);
+  box-shadow: var(--raise-sm);
+  transition: box-shadow 0.2s var(--ease), color 0.2s;
+  flex: none;
+}
+.icon-btn:hover { color: var(--accent); }
+.icon-btn:active { box-shadow: var(--inset-sm); }
+.icon-btn .ico { width: 18px; height: 18px; }
+
+.link-btn {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 14px;
+}
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+/* ------------------------------------------------------------- fields */
+
+.field { display: grid; gap: 8px; }
+.field-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.field-label em { font-style: normal; font-weight: 400; color: var(--muted); margin-left: 6px; }
+
+.input,
+.field input,
+.field textarea {
+  width: 100%;
+  min-height: 46px;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--inset-sm);
+  color: var(--text);
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.field textarea { resize: vertical; min-height: 96px; }
+.input::placeholder, .field input::placeholder, .field textarea::placeholder { color: var(--muted); }
+.input:focus, .field input:focus, .field textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: var(--inset-sm), var(--glow);
+}
+
+.form-msg { min-height: 1.4em; font-size: 13px; color: var(--text-2); }
+.form-msg.is-ok { color: var(--ok); }
+.form-msg.is-err { color: var(--danger); }
+
+/* Toggle switch: an inset track with a raised knob that lights up. */
+.switch { display: flex; gap: 14px; align-items: flex-start; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch-track {
+  flex: none;
+  position: relative;
+  width: 52px;
+  height: 30px;
+  border-radius: var(--r-pill);
+  box-shadow: var(--inset-sm);
+  transition: background 0.3s;
+}
+.switch-knob {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--raise-xs);
+  transition: transform 0.3s var(--ease), background 0.3s, box-shadow 0.3s;
+}
+.switch input:checked + .switch-track .switch-knob {
+  transform: translateX(22px);
+  background: var(--grad);
+  box-shadow: var(--raise-xs), var(--glow);
+}
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 3px; }
+.switch-text { display: grid; gap: 2px; }
+.switch-text small { color: var(--muted); font-size: 13px; }
+
+/* Segmented control: an inset well with a raised pill for the choice. */
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--r);
+  box-shadow: var(--inset-sm);
+}
+.seg {
+  border: 0;
+  background: transparent;
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--muted);
+  transition: all 0.25s var(--ease);
+}
+.seg.is-active { background: var(--surface); color: var(--text); box-shadow: var(--raise-sm); }
+.seg.is-active::after {
+  content: '';
+  display: block;
+  height: 2px;
+  margin: 6px auto -4px;
+  width: 26px;
+  border-radius: 2px;
+  background: var(--grad);
+  box-shadow: var(--glow);
+}
+
+/* Chips: raised by default, pressed in when active. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--edge);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--raise-xs);
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all 0.2s var(--ease);
+}
+.chip:hover { color: var(--text); }
+.chip .ico { width: 14px; height: 14px; }
+.chip.is-active { box-shadow: var(--inset-sm); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.chip-count {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.chip.is-active .chip-count { color: inherit; opacity: 0.75; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  box-shadow: var(--inset-sm);
+}
+.pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--surface);
+  box-shadow: var(--raise-xs);
+}
+
+/* Progress meter: inset groove, glowing fill. */
+.meter {
+  height: 6px;
+  border-radius: var(--r-pill);
+  box-shadow: var(--inset-sm);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--grad);
+  box-shadow: var(--glow);
+  transition: width 0.3s var(--ease);
+}
+
+.spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-top-color: var(--accent);
+  box-shadow: var(--glow);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Skeleton shimmer. */
+.sk {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  box-shadow: var(--inset-sm);
+}
+.sk::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 7%, transparent), transparent);
+  animation: shimmer 1.6s infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

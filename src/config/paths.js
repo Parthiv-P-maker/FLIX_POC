@@ -16,7 +16,14 @@ const PHOTO_DIR = path.join(STORAGE_ROOT, 'photos');
 // photo thumbnail is 640px wide, which for a private photo is the photo.
 const POSTER_DIR = path.join(STORAGE_ROOT, 'posters');
 
-const PUBLIC_DIR = path.join(__dirname, '..', '..', 'public');
+// The React client builds to client/dist (`npm run build`). Until it has been
+// built, fall back to the legacy no-build client in public/ so a fresh
+// checkout still serves a working page.
+const CLIENT_DIST = path.join(__dirname, '..', '..', 'client', 'dist');
+const LEGACY_PUBLIC = path.join(__dirname, '..', '..', 'public');
+const PUBLIC_DIR = process.env.PUBLIC_DIR
+  ? path.resolve(process.env.PUBLIC_DIR)
+  : fs.existsSync(path.join(CLIENT_DIST, 'index.html')) ? CLIENT_DIST : LEGACY_PUBLIC;
 
 function ensureDirs() {
   for (const dir of [UPLOAD_DIR, PHOTO_DIR, POSTER_DIR]) {

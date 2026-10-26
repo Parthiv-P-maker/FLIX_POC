@@ -13,7 +13,7 @@ const globals = require('globals');
  */
 module.exports = [
   {
-    ignores: ['node_modules/**', 'storage/**', 'testmedia/*.jpg', 'testmedia/*.mp4', 'testmedia/*.png'],
+    ignores: ['node_modules/**', 'client/**', 'storage/**', 'testmedia/*.jpg', 'testmedia/*.mp4', 'testmedia/*.png'],
   },
 
   // Server, scripts and tests: Node, CommonJS.
